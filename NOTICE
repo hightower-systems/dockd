@@ -1,0 +1,23 @@
+Dockd
+Copyright 2026 hightower-systems
+
+This product includes software developed by hightower-systems
+(https://github.com/hightower-systems).
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------
+Bundled third-party data
+------------------------------------------------------------------------
+
+Dockd bundles the following third-party reference data under the
+license of its publisher.
+
+## UPS area-surcharge ZIP list
+
+`app/data/ups_area_surcharge_zips.csv` is a snapshot of UPS's
+published Delivery Area Surcharge (DAS) and DAS Extended ZIP code
+list, used by the carrier-optimization engine to detect rural
+addresses and prefer USPS for affected destinations. The source data
+is published by UPS for general carrier reference; consult UPS's
+published tariffs for the authoritative current list.

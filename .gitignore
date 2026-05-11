@@ -1,0 +1,64 @@
+# -- Secrets and writable config --
+# Never commit any of these. The settings page may write to .env at
+# runtime; settings.json / users.json contain operational state and
+# password hashes. All of them stay strictly local / volume-mounted.
+.env
+.env.*
+!.env.example
+settings.json
+users.json
+*.tmp.*
+
+# -- Runtime data --
+ship_history.json
+label_history/
+logs/
+*.log
+shipping_history.db
+override.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+_temp_label.zpl
+*.zpl
+
+# -- Python --
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.python-version
+
+# -- Virtual environments --
+.venv/
+venv/
+env/
+ENV/
+
+# -- Packaging / build --
+build/
+dist/
+*.spec
+
+# -- OS junk --
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# -- Editor / IDE --
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+.history/
