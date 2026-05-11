@@ -1,8 +1,9 @@
 """Dockd application factory."""
 
+import logging
 import os
 import sys
-from flask import Flask
+from flask import Flask, g, has_request_context
 
 from app.config import Config
 from app.extensions import limiter
@@ -16,6 +17,55 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(os.path.dirname(__file__))
     return os.path.join(base_path, relative_path)
+
+
+def _resolve_sentry_token():
+    """Return the per-request Sentry token.
+
+    Preference order:
+      1. Per-request value stashed on `flask.g.sentry_token` (set by
+         the shipping blueprint's before-request hook when the browser
+         sends `X-Sentry-Token`). This is the path scale-agent v2 will
+         drive once it lands.
+      2. `DOCKD_SENTRY_TOKEN` env var -- single-token interim source
+         for v0.2.0 so the integration is usable before scale-agent v2.
+
+    Returns an empty string if neither is set; the Sentry API will
+    return 401 invalid_token and the user-facing error explains the
+    misconfiguration.
+    """
+    if has_request_context():
+        token = getattr(g, 'sentry_token', None)
+        if token:
+            return token
+    return (os.environ.get('DOCKD_SENTRY_TOKEN') or '').strip()
+
+
+def _build_backend(config):
+    """Construct the order backend chosen by env (BACKEND=sentry).
+
+    Returns None when no backend is configured; ShippingService surfaces
+    a structured "backend not configured" error on every order-touching
+    route in that state.
+    """
+    log = logging.getLogger('dockd')
+    backend_name = (os.environ.get('BACKEND') or '').strip().lower()
+    if not backend_name:
+        log.info("No BACKEND env set; order-routing endpoints disabled.")
+        return None
+    if backend_name == 'sentry':
+        base_url = (os.environ.get('SENTRY_BASE_URL') or '').strip()
+        if not base_url:
+            log.warning(
+                "BACKEND=sentry but SENTRY_BASE_URL is empty; falling back "
+                "to backend=None.",
+            )
+            return None
+        from app.services.backend.sentry import SentryBackend
+        log.info("Order backend: SentryBackend(base_url=%s)", base_url)
+        return SentryBackend(base_url=base_url, get_token=_resolve_sentry_token)
+    log.warning("BACKEND=%s is not a known value; backend=None.", backend_name)
+    return None
 
 
 def create_app(config_class=None):
@@ -72,12 +122,13 @@ def create_app(config_class=None):
     printer = PrinterService(app.settings_store, config=config)
     scale = ScaleReader(config.SCALE_VENDOR_ID, config.SCALE_PRODUCT_ID)
 
-    # Wire orchestrators onto app. `backend` is None until the Sentry
-    # backend lands; order-loading and tracking-writeback paths return
-    # a structured "backend not configured" error until then. ShipRush,
-    # label cache, printer, and override audit paths work today.
+    # Order backend selection. v0.2.0 supports `BACKEND=sentry`; an
+    # unset / empty / unknown value leaves backend=None and the
+    # load_order / ship_order / manual_link / void(write-back) routes
+    # return a structured "backend not configured" error.
+    backend = _build_backend(config)
     app.shipping_service = ShippingService(
-        backend=None,
+        backend=backend,
         shiprush=shiprush,
         carrier_engine=carrier_engine,
         printer=printer,

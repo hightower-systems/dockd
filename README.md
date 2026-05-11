@@ -3,8 +3,8 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.1.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-108%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.2.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-137%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
   **[Releases](https://github.com/hightower-systems/dockd/releases)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
@@ -141,25 +141,28 @@ engine, printer service, and ShipRush client; no restart required.
 python -m pytest
 ```
 
-108 tests at v0.1.0 covering authentication + role gating, forced
+137 tests at v0.2.0 covering authentication + role gating, forced
 password-change flow, CarrierEngine determinations, label-cache behavior,
-settings store + user store CRUD, and the settings blueprint surface.
+settings store + user store CRUD, the settings blueprint surface, the
+SentryBackend HTTP client (every wire-level success + failure path),
+and the backend-wired shipping routes (load / ship / manual-link / void).
 
 ## Project Status
 
-**v0.1.0** -- Foundation. Backend-agnostic Flask app, settings-driven
-configuration (no deployment data in the repo), forced-password-change on
-first login, ShipRush + carrier engine + printer all readable from the
-SettingsStore. The order-backend interface is wired as a `backend=None`
-placeholder so load-order / ship-order routes return a structured "backend
-not configured" error until the Sentry implementation lands. NetSuite
-integration removed from `main` and preserved off-tree for future
-re-introduction.
+**v0.2.0** -- Sentry backend wired. `OrderBackend` Protocol + first
+implementation (`SentryBackend`) against Sentry-WMS's v1.9 dockd
+surface. ShippingService drives load / ship / void / manual-link
+through the backend with idempotent UUID4 keys; ShipRush remains the
+label generator. Frontend reads the actual response shape (fixed
+several pre-existing bugs where the legacy template read keys the
+backend never returned). Token source is `DOCKD_SENTRY_TOKEN` env as
+an interim until scale-agent v2 ships per-station tokens through
+`X-Sentry-Token`.
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
 | **v0.1.0** | **Foundation -- backend-agnostic Flask app, SettingsStore + UsersStore + forced password change, ShipRush + carrier engine + printer settings-driven, NetSuite removed from main** | ✅ Released |
-| v0.2.0 | `OrderBackend` Protocol formalized + `SentryBackend` implementation against the v1.9 dockd surface in Sentry-WMS, typed exceptions for each `error_kind` | Planned |
+| **v0.2.0** | **Sentry backend wired -- `OrderBackend` Protocol + `SentryBackend` HTTP client against Sentry-WMS v1.9 dockd surface, ShippingService refactored, frontend so_number rename + dead-path cleanup** | ✅ Released |
 | v0.3.0 | `ship_attempts` SQLite for crash-recovery idempotency, `shipping_history.db` schema expansion, reprint-from-history endpoint | Planned |
 | v0.4.0 | `scale_agent.py` v2 (127.0.0.1-bound + CORS + `/whoami`), browser bootstrap fetches station identity + Sentry token, print flow flips to browser-forwards-ZPL-to-localhost | Planned |
 | v0.5.0 | Health-check polling + connectivity indicator in the operator UI, log redaction (`wms_t_*` patterns, PII), security regression suite | Planned |
@@ -175,4 +178,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.1.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.2.0

@@ -1,13 +1,27 @@
 """Shipping blueprint - thin controllers that delegate to ShippingService."""
 
 import logging
-from flask import Blueprint, request, jsonify, session, render_template, current_app
+from flask import Blueprint, request, jsonify, session, render_template, current_app, g
 from app.blueprints.auth import login_required, override_exception_skus
 from app.config import Config
 
 logger = logging.getLogger('dockd.routes.shipping')
 
 shipping_bp = Blueprint('shipping', __name__)
+
+
+@shipping_bp.before_app_request
+def _capture_sentry_token():
+    """Stash the per-request Sentry token on `g`.
+
+    The browser at a pack station forwards its station-scoped token as
+    `X-Sentry-Token`; the order-backend reads it from `g` via the
+    `_resolve_sentry_token` helper in the app factory. In v0.2.0 the
+    browser does not yet send this header (scale-agent v2 / /whoami
+    bootstrap lands in v0.4.0); the factory falls back to the
+    DOCKD_SENTRY_TOKEN env var when the header is absent.
+    """
+    g.sentry_token = request.headers.get('X-Sentry-Token', '') or ''
 
 
 @shipping_bp.route('/')
@@ -20,9 +34,10 @@ def index():
 @shipping_bp.route('/get_order_details', methods=['GET'])
 @login_required
 def get_order_details():
-    ticket = request.args.get('ticket', '')
-    selected_ff = request.args.get('selected_ff')
-    result = current_app.shipping_service.load_order(ticket, selected_ff)
+    # Accept either `so_number` (canonical, v0.2.0+) or the legacy
+    # `ticket` query param so a stale browser session still works.
+    so_number = request.args.get('so_number') or request.args.get('ticket', '')
+    result = current_app.shipping_service.load_order(so_number)
     status_code = 400 if result.get('status') == 'error' and 'Invalid' in result.get('message', '') else 200
     return jsonify(result), status_code
 
@@ -37,9 +52,17 @@ def get_scale_weight():
 @shipping_bp.route('/ship_order', methods=['POST'])
 @login_required
 def ship_order():
-    data = request.json
+    data = request.json or {}
+    # Accept `so_number` (canonical) or the legacy `fulfillment_id` /
+    # `order_number` (frontend back-compat).
+    so_number = (
+        data.get('so_number')
+        or data.get('fulfillment_id')
+        or data.get('order_number')
+        or ''
+    )
     result = current_app.shipping_service.ship_order(
-        fulfillment_id=data.get('fulfillment_id'),
+        so_number=so_number,
         box_id=data.get('box_id', ''),
         weight=data.get('weight', 0),
         order_number=data.get('order_number'),
@@ -80,11 +103,14 @@ def log_override():
 @shipping_bp.route('/manual_link_tracking', methods=['POST'])
 @login_required
 def manual_link_tracking():
-    data = request.json
+    data = request.json or {}
+    so_number = data.get('so_number') or data.get('ticket', '')
     result = current_app.shipping_service.manual_link(
-        ticket=data.get('ticket', ''),
+        ticket=so_number,
         tracking=data.get('tracking', ''),
         user=session.get('user', {}).get('name', 'Dockd User'),
+        carrier=data.get('carrier'),
+        ship_method=data.get('ship_method'),
     )
     return jsonify(result)
 
@@ -92,9 +118,9 @@ def manual_link_tracking():
 @shipping_bp.route('/reprint_label', methods=['POST'])
 @login_required
 def reprint_label():
-    data = request.json
+    data = request.json or {}
     result = current_app.shipping_service.reprint(
-        ticket=data.get('ticket', ''),
+        ticket=data.get('so_number') or data.get('ticket', ''),
         client_ip=request.remote_addr,
     )
     return jsonify(result)
@@ -103,6 +129,10 @@ def reprint_label():
 @shipping_bp.route('/void_label', methods=['POST'])
 @login_required
 def void_label():
-    data = request.json
-    result = current_app.shipping_service.void(ticket=data.get('ticket', ''))
+    data = request.json or {}
+    result = current_app.shipping_service.void(
+        ticket=data.get('so_number') or data.get('ticket', ''),
+        reason=data.get('reason'),
+        operator_username=session.get('user', {}).get('name'),
+    )
     return jsonify(result)

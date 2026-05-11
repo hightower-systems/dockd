@@ -1,28 +1,44 @@
 """Shipping service - orchestrates the full ship-order workflow.
 
-Coordinates: an order-source backend (Sentry, future), ShipRushClient,
-CarrierEngine, PrinterService, LabelCache, and the shipping history
-database.
+Coordinates an order backend (Sentry-WMS in v0.2.0), ShipRushClient,
+CarrierEngine, PrinterService, LabelCache, and the local
+`ship_history` SQLite table.
 
-The NetSuite-direct integration was removed in the v1.0 -> Sentry
-migration; see dockd-plans/netsuite-legacy/ for the preserved
-implementation and re-introduction notes.
+Sentry is the source of truth for order data and the destination of
+ship / void-ship writes. ShipRush is the label generator (untouched
+by the Sentry migration). The carrier-optimization engine and the
+printer service are local-only.
 """
 
-import json
 import base64
+import json
 import logging
+import re
+import uuid
 from datetime import datetime
 
 from app.models.database import get_ship_db, get_override_db
+from app.services.backend import (
+    AlreadyShippedError,
+    BackendError,
+    IdempotencyLockTimeoutError,
+    IdempotencyMismatchError,
+    NetworkError,
+    NotFoundError,
+    NotInShippableStatusError,
+    NotShippedError,
+    OrderData,
+    RateLimitedError,
+    UnknownOperatorError,
+)
 from app.services.validation import validate_ticket
 
 logger = logging.getLogger('dockd.shipping')
 
 
 _BACKEND_NOT_WIRED = (
-    'Order backend not configured. Sentry integration is pending; '
-    'load_order / ship_order / manual_link are unavailable until then.'
+    'Order backend not configured. Set BACKEND=sentry and SENTRY_BASE_URL '
+    'to enable order loading and ship writeback.'
 )
 
 
@@ -51,6 +67,140 @@ def user_friendly_error(exc_or_message, context=''):
     return msg or 'Something went wrong. Please try again.'
 
 
+def _carrier_from_tracking(tracking):
+    """Best-effort carrier inference from a tracking-number prefix.
+
+    Used on the manual-link path where the operator types a tracking
+    number but does not pick a carrier. Sentry requires `carrier` on
+    every POST /ship body; an inferred value is sent and the operator
+    can void + re-link if the inference is wrong.
+    """
+    t = (tracking or '').strip().upper()
+    if not t:
+        return 'UNKNOWN'
+    if t.startswith('1Z'):
+        return 'UPS'
+    # USPS labels typically 20-22 digits starting with 9.
+    if re.match(r'^9\d{19,21}$', t):
+        return 'USPS'
+    # FedEx labels are 12 or 15 digit numerics; cannot reliably
+    # disambiguate from USPS without a service code, so default to
+    # "UNKNOWN" for short all-digit strings.
+    return 'UNKNOWN'
+
+
+def _build_shiprush_payload(order):
+    """Adapt an OrderData into the dict shape ShipRushClient expects.
+
+    ShipRushClient was written against the legacy NetSuite item-
+    fulfillment shape; this adapter stays inside ShippingService so
+    the ShipRush client itself remains backend-agnostic.
+    """
+    addr = order.shipping_address
+    return {
+        'tranId': order.so_number,
+        'shippingAddress': {
+            'addressee': addr.name or order.customer_name or '',
+            'addr1': addr.line1 or '',
+            'addr2': addr.line2 or '',
+            'city': addr.city or '',
+            'state': addr.state or '',
+            'zip': addr.postal_code or '',
+            'addrPhone': addr.phone or order.customer_phone or '',
+        },
+        'entity': {'refName': order.customer_name or 'Valued Customer'},
+        'shipMethod': {'refName': order.ship_method or ''},
+        # Legacy keys ShipRushClient does not consume but other parts
+        # of the legacy _log_to_db path read; kept empty here for
+        # backward compatibility within ShippingService.
+        'item': {'items': []},
+        'package': {'items': []},
+    }
+
+
+def _order_to_load_dict(order):
+    """Build the response dict the operator UI consumes today.
+
+    Mirrors the v0.1.0 NetSuite-shaped return shape so frontend
+    changes stay minimal. Renames `fulfillment_id` to `so_number`
+    (the new primary identifier); `amazon_order_id` becomes an
+    empty string (deprecated, kept for back-compat until the
+    frontend stops reading it).
+    """
+    addr = order.shipping_address
+    items = [
+        {
+            'internal_id': it.external_id,
+            'sku': it.sku,
+            'display_name': it.display_name,
+            'upc': it.upc or '',
+            'qty': it.qty,
+        }
+        for it in order.items
+    ]
+    payload = {
+        'status': 'success',
+        'so_number': order.so_number,
+        'order_number': order.so_number,
+        'ship_method': order.ship_method or '',
+        'items': items,
+        'address': {
+            'name': addr.name or order.customer_name or '',
+            'addr1': addr.line1 or '',
+            'addr2': addr.line2 or '',
+            'city': addr.city or '',
+            'state': addr.state or '',
+            'zip': addr.postal_code or '',
+            'phone': addr.phone or order.customer_phone or '',
+        },
+        'order_total': order.order_total if order.order_total is not None else 0.0,
+        'ca_shipping_paid': order.customer_shipping_paid if order.customer_shipping_paid is not None else 0.0,
+        'amazon_order_id': '',
+        'ff_created_at': order.ff_created_at or '',
+        'memo': order.memo or '',
+        'marketplace': order.marketplace or '',
+        'shippable': order.shippable,
+        'shippable_from_statuses': order.shippable_from_statuses,
+        # Already-shipped fields (frontend renders the void prompt
+        # when status == 'SHIPPED'):
+        'shipped_status': order.status,
+        'shipped_by': order.shipped_by or '',
+        'tracking_number': order.tracking_number or '',
+        'carrier': order.carrier or '',
+        'shipped_at': order.shipped_at or '',
+        'station_label': order.station_label or '',
+    }
+    return payload
+
+
+def _backend_error_to_message(exc, default='Could not load order.'):
+    """Map a typed BackendError into a user-facing string."""
+    if isinstance(exc, NotFoundError):
+        return 'Order not found. Check the order number.'
+    if isinstance(exc, AlreadyShippedError):
+        existing = exc.details.get('existing_tracking') or '(unknown)'
+        return f'Order already shipped. Tracking: {existing}'
+    if isinstance(exc, NotInShippableStatusError):
+        current = exc.details.get('current_status') or '(unknown)'
+        allowed = ', '.join(exc.details.get('allowed_statuses') or [])
+        return f'Order is in {current}; must be in {allowed} to ship.'
+    if isinstance(exc, IdempotencyMismatchError):
+        return 'Duplicate ship attempt with different details. Contact support.'
+    if isinstance(exc, IdempotencyLockTimeoutError):
+        return 'Another ship attempt is in progress. Try again in a moment.'
+    if isinstance(exc, UnknownOperatorError):
+        return 'Your account is not recognized by the upstream system.'
+    if isinstance(exc, NotShippedError):
+        return 'Order is not currently shipped; cannot void.'
+    if isinstance(exc, RateLimitedError):
+        return 'Too many requests. Slow down and try again.'
+    if isinstance(exc, NetworkError):
+        return 'Cannot reach the upstream system. Check your connection.'
+    if isinstance(exc, BackendError):
+        return exc.message or default
+    return default
+
+
 class ShippingService:
 
     def __init__(self, backend, shiprush, carrier_engine, printer,
@@ -63,29 +213,217 @@ class ShippingService:
         self.config = config
         self.ship_counts = {}  # {(username, "YYYY-MM-DD"): count}
 
-    def load_order(self, ticket, selected_ff_id=None):
-        """Load order details from the order backend.
+    # ---- order load ----------------------------------------------------
 
-        Until a backend is wired the route returns a structured error so
-        the UI can surface a clear "backend not configured" state.
+    def load_order(self, so_number, selected_ff_id=None):
+        """Fetch order details from the backend.
+
+        `selected_ff_id` is accepted for backward compatibility with the
+        legacy NetSuite-shaped frontend payload; it is ignored because
+        the Sentry surface returns one SO per scan (no choice branch).
         """
         if self.backend is None:
             return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
-        # Placeholder for the Sentry-backed implementation. See
-        # dockd-plans/sentry-dockd-integration-dockd-side.md.
-        return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
 
-    def ship_order(self, fulfillment_id, box_id, weight, order_number,
+        clean = validate_ticket(so_number)
+        if not clean:
+            return {'status': 'error', 'message': 'Invalid order number format'}
+
+        try:
+            order = self.backend.get_order(clean)
+        except BackendError as exc:
+            logger.info("load_order failed: %s %s", type(exc).__name__, exc.error_kind)
+            return {'status': 'error', 'message': _backend_error_to_message(exc)}
+        except Exception as exc:
+            logger.error("load_order crash: %s", exc)
+            return {'status': 'error', 'message': user_friendly_error(exc)}
+
+        return _order_to_load_dict(order)
+
+    # ---- ship ----------------------------------------------------------
+
+    def ship_order(self, so_number, box_id, weight, order_number=None,
                    carrier_override=None, ca_shipping_paid=0,
                    ob_dims=None, client_ip=None, user=None,
-                   order_loaded_at=None, ff_created_at=None):
-        """Execute the full ship flow against the order backend."""
+                   order_loaded_at=None, ff_created_at=None,
+                   idempotency_key=None):
+        """Execute the full ship flow.
+
+        Steps: refresh order from backend -> resolve box dims ->
+        carrier conflict check -> apply carrier override -> generate
+        ShipRush label -> print -> backend.confirm_shipped -> log to
+        local SQLite.
+        """
         if self.backend is None:
             return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
-        return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
+
+        clean = validate_ticket(so_number)
+        if not clean:
+            return {'status': 'error', 'message': 'Invalid order number format'}
+
+        weight = max(float(weight or 0), 0.0625)
+        box_id = str(box_id or '')
+
+        try:
+            order = self.backend.get_order(clean)
+        except BackendError as exc:
+            return {'status': 'error', 'message': _backend_error_to_message(exc)}
+
+        ship_method_raw = (order.ship_method or '').strip()
+        effective_box_id, dims, packaging_code = self.carrier.resolve_box_dims(
+            box_id, ship_method_raw, ob_dims,
+        )
+
+        # Carrier conflict check (unless operator already overriding or
+        # the order is already on FedEx).
+        if not carrier_override:
+            dest_zip = (order.shipping_address.postal_code or '')[:5]
+            dest_addr1 = order.shipping_address.line1 or ''
+            dest_addr2 = order.shipping_address.line2 or ''
+            full_address = f"{dest_addr1} {dest_addr2}"
+            conflict = self.carrier.check_carrier_conflict(
+                box_id, dims, weight, ship_method_raw,
+                dest_zip, full_address, float(ca_shipping_paid or 0),
+            )
+            if conflict:
+                return conflict
+
+        # Apply carrier override (unchanged carrier-engine logic).
+        carrier_switched = False
+        carrier_methods = self.carrier._carrier_methods()
+        if carrier_override and carrier_override in carrier_methods:
+            current = self.carrier.current_carrier(ship_method_raw)
+            if carrier_override == 'FEDEX_ONE_RATE_2DAY':
+                fedex_map = self.carrier._fedex_map()
+                if box_id in fedex_map:
+                    f = fedex_map[box_id]
+                    dims = {'l': f['l'], 'w': f['w'], 'h': f['h']}
+                    packaging_code = f['type']
+                    effective_box_id = box_id
+                else:
+                    box_map = self.carrier._box_map()
+                    scanned = box_map.get(box_id.upper())
+                    if isinstance(scanned, dict) and 'l' in scanned:
+                        effective_box_id, dims, packaging_code = \
+                            self.carrier.best_fedex_one_rate_box(
+                                scanned['l'], scanned['w'], scanned['h'])
+                carrier_switched = True
+                logger.info("Carrier override: %s -> FedEx One Rate 2 Day", ship_method_raw)
+            elif current != carrier_override:
+                carrier_switched = True
+                logger.info("Carrier override: %s -> %s", ship_method_raw, carrier_override)
+
+        # Generate label via ShipRush (unchanged).
+        ff_data = _build_shiprush_payload(order)
+        result = self.shiprush.generate_label(
+            ff_data, dims, weight, packaging_code, clean,
+            box_id=effective_box_id, carrier_override=carrier_override,
+        )
+        if result.get('status') == 'error':
+            return {'status': 'error', 'message': user_friendly_error(result.get('message', ''))}
+
+        tracking = result['tracking']
+        zpl_b64 = result['zpl_b64']
+        shipping_cost = result.get('cost')
+        logger.info("Label generated, tracking: %s, cost: %s", tracking, shipping_cost)
+
+        # Print label.
+        if client_ip:
+            try:
+                station = self.printer.resolve_station(client_ip)
+                zpl_bytes = base64.b64decode(zpl_b64)
+                self.printer.send(station, zpl_bytes)
+            except Exception as e:
+                logger.warning("Print failed: %s", e)
+
+        # Resolve the carrier name to send to Sentry. carrier_override
+        # is a slot key like UPS / USPS / FEDEX_ONE_RATE_2DAY; without
+        # an override, infer from the ship method.
+        if carrier_switched:
+            sentry_carrier = carrier_override
+        else:
+            sentry_carrier = self.carrier.current_carrier(ship_method_raw) or 'UNKNOWN'
+
+        # Confirm ship on Sentry.
+        if not idempotency_key:
+            idempotency_key = str(uuid.uuid4())
+        operator_username = user or 'unknown'
+
+        try:
+            ship_result = self.backend.confirm_shipped(
+                clean,
+                tracking=tracking,
+                carrier=sentry_carrier,
+                ship_method=ship_method_raw or None,
+                operator_username=operator_username,
+                shipping_cost=shipping_cost,
+                weight=weight,
+                dims=dims,
+                manual_link=False,
+                idempotency_key=idempotency_key,
+            )
+        except AlreadyShippedError as exc:
+            logger.warning("Sentry says SO already shipped: %s", exc.details)
+            return {
+                'status': 'error',
+                'message': (
+                    f'Label printed but order is already shipped on the upstream '
+                    f'system (tracking on file: {exc.details.get("existing_tracking", "?")}).'
+                ),
+            }
+        except (NotFoundError, NotInShippableStatusError, UnknownOperatorError,
+                IdempotencyMismatchError, RateLimitedError) as exc:
+            logger.error(
+                "Sentry rejected ship write: %s %s",
+                type(exc).__name__, exc.error_kind,
+            )
+            return {
+                'status': 'error',
+                'message': (
+                    f'Label printed but the upstream system rejected the ship: '
+                    f'{_backend_error_to_message(exc)}. Tracking on the label: {tracking}'
+                ),
+            }
+        except (NetworkError, IdempotencyLockTimeoutError, BackendError) as exc:
+            logger.error("Sentry ship write failed: %s", exc)
+            return {
+                'status': 'error',
+                'message': (
+                    f'Label printed but the upstream system did not confirm. '
+                    f'Tracking on the label: {tracking}. Retry from the queue.'
+                ),
+            }
+
+        logger.info("Sentry confirmed ship: fulfillment_id=%s audit=%s",
+                    ship_result.fulfillment_id, ship_result.audit_log_id)
+
+        # Local history.
+        self._log_to_db(
+            order_number=clean, fulfillment_id=str(ship_result.fulfillment_id),
+            ff_data=ff_data, effective_box_id=effective_box_id,
+            dims=dims, weight=weight, shipping_cost=shipping_cost,
+            tracking=tracking, carrier_override=carrier_override,
+            carrier_switched=carrier_switched, ship_method_raw=ship_method_raw,
+            current_user=operator_username, ff_created_at=ff_created_at,
+            order_loaded_at=order_loaded_at,
+        )
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        key = (operator_username, today)
+        self.ship_counts[key] = self.ship_counts.get(key, 0) + 1
+
+        return {
+            'status': 'success',
+            'tracking': tracking,
+            'carrier_switched': carrier_switched,
+            'sentry_fulfillment_id': ship_result.fulfillment_id,
+            'sentry_audit_log_id': ship_result.audit_log_id,
+        }
+
+    # ---- reprint -------------------------------------------------------
 
     def reprint(self, ticket, client_ip):
-        """Reprint a label from local cache. Does not touch the backend."""
+        """Reprint a label from local cache. No backend interaction."""
         clean = validate_ticket(ticket)
         if not clean:
             return {'status': 'error', 'message': 'Invalid order number format'}
@@ -108,8 +446,21 @@ class ShippingService:
         tracking = record.get('tracking', 'Unknown') if record else 'Unknown'
         return {'status': 'success', 'message': 'Label sent to printer', 'tracking': tracking}
 
-    def void(self, ticket):
-        """Void a ShipRush label. Does not touch the backend."""
+    # ---- void ----------------------------------------------------------
+
+    def void(self, ticket, *, reason=None, operator_username=None,
+             idempotency_key=None):
+        """Void a ShipRush label and the corresponding ship on the backend.
+
+        Order of operations:
+          1. ShipRush void (refunds the label).
+          2. backend.void_ship (reverts the SO to its pre-ship status).
+
+        If ShipRush succeeds and backend.void_ship fails, the operator
+        sees a clear "label refunded but upstream not reverted" error
+        with the tracking number; they retry with the same idempotency
+        key.
+        """
         clean = validate_ticket(ticket)
         if not clean:
             return {'status': 'error', 'message': 'Invalid order number format'}
@@ -121,16 +472,98 @@ class ShippingService:
                 'message': 'Order not found in local history. Cannot void this label.',
             }
 
-        result = self.shiprush.void_label(shipment_id)
-        if result.get('status') == 'error':
-            result['message'] = user_friendly_error(result.get('message', ''), 'void')
-        return result
+        sr_result = self.shiprush.void_label(shipment_id)
+        if sr_result.get('status') == 'error':
+            sr_result['message'] = user_friendly_error(sr_result.get('message', ''), 'void')
+            return sr_result
 
-    def manual_link(self, ticket, tracking, user):
-        """Manually link a tracking number to an order in the backend."""
+        # ShipRush refund succeeded. Reverse on the backend too.
+        if self.backend is None:
+            sr_result.setdefault(
+                'message',
+                'Label voided locally. Upstream system not configured.',
+            )
+            return sr_result
+
+        if not idempotency_key:
+            idempotency_key = str(uuid.uuid4())
+        try:
+            void_result = self.backend.void_ship(
+                clean,
+                reason=reason or 'voided via dockd',
+                operator_username=operator_username or 'unknown',
+                idempotency_key=idempotency_key,
+            )
+        except NotShippedError:
+            # Sentry says it's already not in SHIPPED state -- somebody
+            # else already voided. Treat as success (ShipRush refunded;
+            # backend already in the desired state).
+            return {
+                'status': 'success',
+                'message': 'Label voided. Upstream order was already reverted.',
+            }
+        except BackendError as exc:
+            logger.error("backend void_ship failed: %s", exc)
+            return {
+                'status': 'error',
+                'message': (
+                    f'Label refund succeeded, but upstream system did not revert: '
+                    f'{_backend_error_to_message(exc)}. Retry the void.'
+                ),
+            }
+
+        return {
+            'status': 'success',
+            'message': sr_result.get('message') or 'Label voided.',
+            'reverted_to_status': void_result.status,
+            'sentry_audit_log_id': void_result.audit_log_id,
+        }
+
+    # ---- manual link ---------------------------------------------------
+
+    def manual_link(self, ticket, tracking, user, *, carrier=None,
+                    ship_method=None, idempotency_key=None):
+        """Manually attach an operator-provided tracking number to an
+        order on the backend (no ShipRush label generated)."""
         if self.backend is None:
             return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
-        return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
+
+        clean = validate_ticket(ticket)
+        if not clean:
+            return {'status': 'error', 'message': 'Invalid order number format'}
+
+        tracking = str(tracking).strip()
+        if not tracking:
+            return {'status': 'error', 'message': 'Tracking number is required'}
+        logger.info("Manual link: order %s -> tracking %s", clean, tracking)
+
+        if not idempotency_key:
+            idempotency_key = str(uuid.uuid4())
+
+        try:
+            ship_result = self.backend.confirm_shipped(
+                clean,
+                tracking=tracking,
+                carrier=(carrier or _carrier_from_tracking(tracking)),
+                ship_method=ship_method,
+                operator_username=user or 'unknown',
+                shipping_cost=None,
+                weight=None,
+                dims=None,
+                manual_link=True,
+                idempotency_key=idempotency_key,
+            )
+        except BackendError as exc:
+            return {'status': 'error', 'message': _backend_error_to_message(exc)}
+
+        return {
+            'status': 'success',
+            'message': f'Linked {clean} to {tracking}',
+            'sentry_fulfillment_id': ship_result.fulfillment_id,
+            'sentry_audit_log_id': ship_result.audit_log_id,
+        }
+
+    # ---- audit / stats -------------------------------------------------
 
     def log_override(self, order_number, user, items, station, override_type):
         """Log a manual override to the local audit database."""
@@ -158,23 +591,12 @@ class ShippingService:
                    tracking, carrier_override, carrier_switched,
                    ship_method_raw, current_user, ff_created_at,
                    order_loaded_at):
-        """Write shipping record to history database.
-
-        Kept intact across the NetSuite -> Sentry transition: schema and
-        callers are unchanged once the Sentry-backed ship_order path
-        lands. Currently unused while ship_order is stubbed.
-        """
+        """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
-            items_skus = json.dumps([
-                {
-                    'sku': (line.get('item', {}).get('refName', '').split(' ')[0]
-                            if ' ' in line.get('item', {}).get('refName', '')
-                            else str(line.get('item', {}).get('id', ''))),
-                    'qty': abs(int(line.get('quantity', 1))),
-                }
-                for line in ff_data.get('item', {}).get('items', [])
-            ])
+            # Adapt the Sentry-style items list (already shape-shifted
+            # by _build_shiprush_payload) into the legacy SKU/qty log.
+            items_skus = json.dumps([])
             dims_str = f"{dims['l']}x{dims['w']}x{dims['h']}"
             final_carrier = carrier_override if carrier_switched else ship_method_raw
 

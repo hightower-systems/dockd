@@ -493,7 +493,8 @@
         const STATION_ID = new URLSearchParams(window.location.search).get('station') || '2';
         let currentUser = null;
         let currentOrderId = null;
-        let currentFulfillmentId = null;
+        let currentSoNumber = null;
+        let currentFulfillmentId = null;  // legacy alias retained for any straggler references; mirrors currentSoNumber
         let itemsNeeded = [];
         let selectedUserTemp = '';
         let isFedExMode = false;
@@ -507,7 +508,6 @@
         let currentOrderTotal = 0;
         let orderLoadedAt = null;
         let currentFfCreatedAt = '';
-        let currentAmazonOrderId = '';
         let manualCarrierOverride = null;
         const overrideExceptions = new Set({{ override_exceptions | tojson }});
 
@@ -743,97 +743,60 @@
             verifyItem(val);
         }
 
-        function fetchOrder(ticket, specificFulfillmentId = null) {
-            let url = `/get_order_details?ticket=${ticket}`;
-            if (specificFulfillmentId) url += `&selected_ff=${specificFulfillmentId}`;
+        function fetchOrder(soNumber) {
+            const url = `/get_order_details?so_number=${encodeURIComponent(soNumber)}`;
 
             fetch(url)
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
                     document.getElementById('choice-modal').style.display = 'none';
-                    currentOrderId = ticket;
-                    currentFulfillmentId = data.fulfillment_id;
-                    itemsNeeded = data.items.map(i => ({...i, quantity: parseInt(i.quantity) || 1, verified: false, scanned_qty: 0}));
-                    document.getElementById('order-id-display').innerText = ticket;
-                    document.getElementById('cust-name').innerText = data.customer.entityId;
-                    document.getElementById('cust-phone').innerText = data.customer.phone || "No Phone";
-                    const addr = data.customer.addressBook;
-                    if (addr) {
-                        let fullAddr = "";
-                        if (addr.addr1) fullAddr = `${addr.addr1}, ${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
-                        else if (addr.addrText) fullAddr = addr.addrText.replace(/\r?\n|\r/g, ", ");
-                        else fullAddr = `${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
-                        document.getElementById('cust-addr').innerText = fullAddr;
-                    } else { document.getElementById('cust-addr').innerText = "Address not available"; }
-                    const shipMethod = (data.shipMethod || "Best Way").toString().trim();
+                    currentOrderId = soNumber;
+                    currentSoNumber = data.so_number || soNumber;
+                    currentFulfillmentId = currentSoNumber;
+                    itemsNeeded = (data.items || []).map(i => ({
+                        ...i,
+                        quantity: parseInt(i.qty) || 1,
+                        scanned_qty: 0,
+                        verified: false,
+                        item: {refName: i.display_name || i.sku || ''},
+                    }));
+                    document.getElementById('order-id-display').innerText = currentSoNumber;
+                    const addr = data.address || {};
+                    document.getElementById('cust-name').innerText = addr.name || 'Customer';
+                    document.getElementById('cust-phone').innerText = addr.phone || 'No Phone';
+                    let fullAddr = '';
+                    if (addr.addr1) fullAddr = `${addr.addr1}, ${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
+                    else fullAddr = `${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`.trim();
+                    document.getElementById('cust-addr').innerText = fullAddr || 'Address not available';
+                    const shipMethod = (data.ship_method || 'Best Way').toString().trim();
                     document.getElementById('ship-via').innerText = shipMethod;
-                    currentOrderTotal = parseFloat(data.orderTotal) || 0;
+                    currentOrderTotal = parseFloat(data.order_total) || 0;
                     document.getElementById('order-total-display').innerText = `$${currentOrderTotal.toFixed(2)}`;
-                    currentCaShippingPaid = parseFloat(data.caShippingPaid) || 0;
+                    currentCaShippingPaid = parseFloat(data.ca_shipping_paid) || 0;
                     document.getElementById('ca-shipping-paid').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
                     orderLoadedAt = new Date().toISOString();
-                    currentFfCreatedAt = data.ffCreatedAt || '';
-                    currentAmazonOrderId = data.amazonOrderId || '';
+                    currentFfCreatedAt = data.ff_created_at || '';
                     renderItems();
                     amazonCarrierOverride = null;
                     highValueCarrierOverride = null;
                     manualCarrierOverride = null;
                     const changeBtn = document.getElementById('btn-change-carrier');
                     changeBtn.style.opacity = '1'; changeBtn.style.pointerEvents = 'auto';
-                    // Check for Amazon cancellation before proceeding
-                    fetch(`/check_cancellation?order_id=${encodeURIComponent(ticket)}&amazon_id=${encodeURIComponent(currentAmazonOrderId)}`)
-                    .then(r => r.json())
-                    .then(cancelData => {
-                        if (cancelData.status === 'cancelled') {
-                            document.getElementById('cancelled-amazon-id').innerText = cancelData.amazon_order_id || 'Unknown';
-                            document.getElementById('cancelled-at-display').innerText = cancelData.cancelled_at ? new Date(cancelData.cancelled_at).toLocaleString() : 'Unknown';
-                            document.getElementById('cancelled-modal').style.display = 'flex';
-                            log(`BLOCKED - Order ${ticket} is CANCELLED (Amazon: ${cancelData.amazon_order_id})`);
-                            return;
-                        }
-                        const sm = shipMethod.toLowerCase();
-                        if (sm.includes("pick up") || sm.includes("pickup") || sm.includes("will call")) showPickupModal();
-                        else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
-                        else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes("fedex") && !sm.includes("ups") && (sm.includes("usps") || sm.includes("ground advantage") || sm.includes("priority") || sm.includes("first class"))) {
-                            showHighValueModal(currentOrderTotal);
-                        }
-                        if (sm.includes("fedex")) { isFedExMode = true; activateFedExUI(); }
-                        else { isFedExMode = false; resetBoxUI(); }
-                        log("Order Loaded.");
-                    })
-                    .catch(() => {
-                        // Fail open - if cancellation check errors, proceed normally
-                        const sm = shipMethod.toLowerCase();
-                        if (sm.includes("pick up") || sm.includes("pickup") || sm.includes("will call")) showPickupModal();
-                        else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
-                        else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes("fedex") && !sm.includes("ups") && (sm.includes("usps") || sm.includes("ground advantage") || sm.includes("priority") || sm.includes("first class"))) {
-                            showHighValueModal(currentOrderTotal);
-                        }
-                        if (sm.includes("fedex")) { isFedExMode = true; activateFedExUI(); }
-                        else { isFedExMode = false; resetBoxUI(); }
-                        log("Order Loaded.");
-                    });
-                } else if (data.status === 'choice_needed') {
-                    showChoiceModal(ticket, data.options);
+
+                    const sm = shipMethod.toLowerCase();
+                    if (sm.includes('pick up') || sm.includes('pickup') || sm.includes('will call')) showPickupModal();
+                    else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
+                    else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes('fedex') && !sm.includes('ups') && (sm.includes('usps') || sm.includes('ground advantage') || sm.includes('priority') || sm.includes('first class'))) {
+                        showHighValueModal(currentOrderTotal);
+                    }
+                    if (sm.includes('fedex')) { isFedExMode = true; activateFedExUI(); }
+                    else { isFedExMode = false; resetBoxUI(); }
+                    log('Order Loaded.');
                 } else {
                     showError(data.message);
                 }
             });
-        }
-
-        function showChoiceModal(ticket, options) {
-            const list = document.getElementById('choice-list');
-            list.innerHTML = '';
-            options.forEach(opt => {
-                const btn = document.createElement('button');
-                btn.className = 'user-btn';
-                btn.style.padding = '15px'; btn.style.fontSize = '16px';
-                btn.innerText = opt.label;
-                btn.onclick = () => fetchOrder(ticket, opt.id);
-                list.appendChild(btn);
-            });
-            document.getElementById('choice-modal').style.display = 'flex';
         }
 
         function getTotalItems() { return itemsNeeded.reduce((acc, i) => acc + parseInt(i.quantity), 0); }
@@ -911,7 +874,7 @@
                     document.getElementById('weight-val').innerText = finalWeight;
                     document.getElementById('scale-section').classList.add('weight-captured');
                     log(`Generating Label (${boxId} @ ${finalWeight} lbs)...`);
-                    pendingShipPayload = { fulfillment_id: currentFulfillmentId, box_id: boxId, weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, order_loaded_at: orderLoadedAt, ff_created_at: currentFfCreatedAt };
+                    pendingShipPayload = { so_number: currentSoNumber, box_id: boxId, weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, order_loaded_at: orderLoadedAt, ff_created_at: currentFfCreatedAt };
                     if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
                     else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
                     else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
@@ -1082,7 +1045,7 @@
                     document.getElementById('weight-val').innerText = finalWeight;
                     document.getElementById('scale-section').classList.add('weight-captured');
                     log(`Generating Label (OB ${l}x${w}x${h} @ ${finalWeight} lbs)...`);
-                    pendingShipPayload = { fulfillment_id: currentFulfillmentId, box_id: 'OB', weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, ob_dims: {l: l, w: w, h: h} };
+                    pendingShipPayload = { so_number: currentSoNumber, box_id: 'OB', weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, ob_dims: {l: l, w: w, h: h} };
                     if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
                     else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
                     else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
@@ -1135,7 +1098,7 @@
             document.getElementById('link-modal').style.display = 'none';
             document.getElementById('reprint-modal').style.display = 'none';
             document.getElementById('void-modal').style.display = 'none';
-            currentOrderId = null; currentFulfillmentId = null; itemsNeeded = []; isFedExMode = false;
+            currentOrderId = null; currentSoNumber = null; currentFulfillmentId = null; itemsNeeded = []; isFedExMode = false;
             document.getElementById('order-id-display').innerText = "Waiting for scan...";
             document.getElementById('cust-name').innerText = "Waiting for scan...";
             document.getElementById('cust-phone').innerText = "Waiting for scan...";
@@ -1147,7 +1110,6 @@
             currentOrderTotal = 0;
             orderLoadedAt = null;
             currentFfCreatedAt = '';
-            currentAmazonOrderId = '';
             manualCarrierOverride = null;
             const changeBtn = document.getElementById('btn-change-carrier');
             changeBtn.style.opacity = '0.4'; changeBtn.style.pointerEvents = 'none';
@@ -1206,14 +1168,18 @@
         }
         function closeLinkModal() { document.getElementById('link-modal').style.display = 'none'; if (activePanel === 'ship') document.getElementById('main-input').focus(); }
 
-        function linkFetchOrder(ticket, selectedFfId) {
-            let url = `/get_order_details?ticket=${encodeURIComponent(ticket)}`;
-            if (selectedFfId) url += `&selected_ff=${selectedFfId}`;
+        function linkFetchOrder(ticket) {
+            const url = `/get_order_details?so_number=${encodeURIComponent(ticket)}`;
             fetch(url).then(r => r.json()).then(data => {
                 if (data.status === 'success') {
                     document.getElementById('link-choice-box').style.display = 'none';
                     linkOrderId = ticket;
-                    linkItemsNeeded = data.items.map(i => ({...i, quantity: parseInt(i.quantity) || 1, scanned_qty: 0}));
+                    linkItemsNeeded = (data.items || []).map(i => ({
+                        ...i,
+                        quantity: parseInt(i.qty) || 1,
+                        scanned_qty: 0,
+                        item: {refName: i.display_name || i.sku || ''},
+                    }));
                     document.getElementById('link-order-display').innerText = ticket;
                     document.getElementById('link-order-display2').innerText = ticket;
                     linkStep = 'verify';
@@ -1223,17 +1189,6 @@
                     renderLinkItems();
                     document.getElementById('link-verify-input').value = '';
                     document.getElementById('link-verify-input').focus();
-                } else if (data.status === 'choice_needed') {
-                    linkPendingOrderTicket = ticket;
-                    const list = document.getElementById('link-choice-list');
-                    list.innerHTML = '';
-                    data.options.forEach(opt => {
-                        const btn = document.createElement('button');
-                        btn.className = 'user-btn'; btn.style.padding = '12px'; btn.innerText = opt.label;
-                        btn.onclick = () => linkFetchOrder(ticket, opt.id);
-                        list.appendChild(btn);
-                    });
-                    document.getElementById('link-choice-box').style.display = 'block';
                 } else { alert('Error: ' + (data.message || 'Could not load order')); }
             });
         }
@@ -1322,7 +1277,7 @@
             const btn = document.getElementById('btn-link-submit');
             const originalText = btn.innerText;
             btn.innerText = 'UPDATING...'; btn.disabled = true;
-            fetch('/manual_link_tracking', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket, tracking: tracking }) })
+            fetch('/manual_link_tracking', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket, tracking: tracking }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -1347,7 +1302,7 @@
             const btn = document.getElementById('btn-reprint-submit');
             const originalText = btn.innerText;
             btn.innerText = "PRINTING..."; btn.disabled = true;
-            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket, station: STATION_ID }) })
+            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket, station: STATION_ID }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -1366,7 +1321,7 @@
             if (!lastShippedOrderId) return;
             const btn = document.getElementById('btn-reprint-last');
             btn.innerText = 'PRINTING...'; btn.style.pointerEvents = 'none';
-            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: lastShippedOrderId, station: STATION_ID }) })
+            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: lastShippedOrderId, station: STATION_ID }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -1389,7 +1344,7 @@
             const btn = document.getElementById('btn-void-submit');
             const originalText = btn.innerText;
             btn.innerText = "VOIDING..."; btn.disabled = true;
-            fetch('/void_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket }) })
+            fetch('/void_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
