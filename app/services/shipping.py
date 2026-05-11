@@ -246,7 +246,8 @@ class ShippingService:
                    carrier_override=None, ca_shipping_paid=0,
                    ob_dims=None, client_ip=None, user=None,
                    order_loaded_at=None, ff_created_at=None,
-                   idempotency_key=None):
+                   idempotency_key=None,
+                   station_id=None, station_label=None):
         """Execute the full ship flow.
 
         Steps: refresh order from backend -> resolve box dims ->
@@ -327,14 +328,9 @@ class ShippingService:
         shipping_cost = result.get('cost')
         logger.info("Label generated, tracking: %s, cost: %s", tracking, shipping_cost)
 
-        # Print label.
-        if client_ip:
-            try:
-                station = self.printer.resolve_station(client_ip)
-                zpl_bytes = base64.b64decode(zpl_b64)
-                self.printer.send(station, zpl_bytes)
-            except Exception as e:
-                logger.warning("Print failed: %s", e)
+        # Print flow flip (v0.3.0): the dockd container has no printer.
+        # The browser receives `zpl_b64` in the success response and
+        # forwards it to its local scale-agent at 127.0.0.1:5050/print.
 
         # Resolve the carrier name to send to Sentry. carrier_override
         # is a slot key like UPS / USPS / FEDEX_ONE_RATE_2DAY; without
@@ -406,6 +402,7 @@ class ShippingService:
             carrier_switched=carrier_switched, ship_method_raw=ship_method_raw,
             current_user=operator_username, ff_created_at=ff_created_at,
             order_loaded_at=order_loaded_at,
+            station_id=station_id, station_label=station_label,
         )
 
         today = datetime.now().strftime('%Y-%m-%d')
@@ -418,12 +415,19 @@ class ShippingService:
             'carrier_switched': carrier_switched,
             'sentry_fulfillment_id': ship_result.fulfillment_id,
             'sentry_audit_log_id': ship_result.audit_log_id,
+            # The browser forwards this to its scale agent at
+            # 127.0.0.1:5050/print after the success response lands.
+            'zpl_b64': zpl_b64,
         }
 
     # ---- reprint -------------------------------------------------------
 
-    def reprint(self, ticket, client_ip):
-        """Reprint a label from local cache. No backend interaction."""
+    def reprint(self, ticket, client_ip=None):
+        """Look up a label from local cache and return its ZPL.
+
+        The browser forwards the returned `zpl_b64` to its local
+        scale-agent for printing. No server-side print call.
+        """
         clean = validate_ticket(ticket)
         if not clean:
             return {'status': 'error', 'message': 'Invalid order number format'}
@@ -435,16 +439,14 @@ class ShippingService:
                 'message': 'Label not found. Only labels from recent orders (last 8 hours) can be reprinted.',
             }
 
-        try:
-            station = self.printer.resolve_station(client_ip)
-            zpl_bytes = base64.b64decode(zpl_b64)
-            self.printer.send(station, zpl_bytes)
-        except Exception as e:
-            return {'status': 'error', 'message': user_friendly_error(e, 'reprint')}
-
         record = self.label_cache.lookup(clean)
         tracking = record.get('tracking', 'Unknown') if record else 'Unknown'
-        return {'status': 'success', 'message': 'Label sent to printer', 'tracking': tracking}
+        return {
+            'status': 'success',
+            'message': 'Label ready',
+            'tracking': tracking,
+            'zpl_b64': zpl_b64,
+        }
 
     # ---- void ----------------------------------------------------------
 
@@ -590,7 +592,7 @@ class ShippingService:
                    effective_box_id, dims, weight, shipping_cost,
                    tracking, carrier_override, carrier_switched,
                    ship_method_raw, current_user, ff_created_at,
-                   order_loaded_at):
+                   order_loaded_at, station_id=None, station_label=None):
         """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
@@ -624,14 +626,15 @@ class ShippingService:
                    (order_number, fulfillment_id, items_skus, box_id, dims, weight,
                     shipping_cost, tracking, carrier, ship_method, shipped_by, shipped_at,
                     ff_created_at, order_loaded_at, fulfillment_age_minutes,
-                    ship_speed_seconds, carrier_switched)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ship_speed_seconds, carrier_switched, station_id, station_label)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (order_number, fulfillment_id, items_skus, effective_box_id,
                  dims_str, weight, shipping_cost, tracking, final_carrier,
                  ship_method_raw, current_user,
                  shipped_at.strftime('%Y-%m-%d %H:%M:%S'),
                  ff_created_at, order_loaded_at, fulfillment_age_minutes,
-                 ship_speed_seconds, 1 if carrier_switched else 0),
+                 ship_speed_seconds, 1 if carrier_switched else 0,
+                 station_id or '', station_label or ''),
             )
             conn.commit()
             conn.close()

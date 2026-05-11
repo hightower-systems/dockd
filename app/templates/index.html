@@ -427,6 +427,7 @@
         <div class="sidebar-spacer"></div>
         <div class="sidebar-footer">
             <div class="user-badge" id="display-user">...</div>
+            <div id="station-label-display" style="text-align:center; font-size:0.7rem; color:rgba(255,255,255,0.5); letter-spacing:1px; text-transform:uppercase; padding:4px 0;"></div>
             {% if current_user and current_user.role == 'admin' %}
             <a class="sidebar-btn" href="/settings" style="text-decoration:none;">SETTINGS</a>
             {% endif %}
@@ -533,6 +534,105 @@
             }
         }
         loadPublicSettings();
+
+        // ====== SCALE AGENT BOOTSTRAP ======
+        // Each pack station laptop runs the dockd scale agent on
+        // 127.0.0.1:5050. Pre-page-load we hit /whoami to capture the
+        // station identity + per-station Sentry bearer token; every
+        // call to dockd's API surface then forwards X-Sentry-Token so
+        // the dockd container can authenticate upstream to Sentry on
+        // the operator's behalf.
+        const AGENT_BASE = 'http://localhost:5050';
+        let agentInfo = null;          // {station_id, station_label, sentry_token, agent_version}
+        let agentReachable = false;
+
+        async function bootstrapAgent() {
+            try {
+                const r = await fetch(`${AGENT_BASE}/whoami`, { mode: 'cors' });
+                if (!r.ok) throw new Error(`whoami ${r.status}`);
+                agentInfo = await r.json();
+                agentReachable = true;
+                if (agentInfo.station_label) {
+                    const el = document.getElementById('station-label-display');
+                    if (el) el.textContent = agentInfo.station_label;
+                }
+                hideAgentBanner();
+            } catch (e) {
+                agentReachable = false;
+                showAgentBanner();
+            }
+        }
+
+        function showAgentBanner() {
+            let bar = document.getElementById('agent-down-banner');
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'agent-down-banner';
+                bar.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:10000; background:#dc2626; color:white; padding:10px 16px; font-weight:700; text-align:center; font-size:14px; letter-spacing:0.5px;';
+                bar.innerHTML = 'SCALE AGENT NOT RUNNING -- start <code>agent.py</code> on this station. Scale, printer, and label calls will fail until it is reachable.';
+                document.body.appendChild(bar);
+            }
+            bar.style.display = 'block';
+        }
+
+        function hideAgentBanner() {
+            const bar = document.getElementById('agent-down-banner');
+            if (bar) bar.style.display = 'none';
+        }
+
+        // Wrapper around fetch that adds the per-station Sentry token
+        // to every dockd API call. Reads agentInfo lazily so a delayed
+        // /whoami response still gets included.
+        async function dockdApi(path, options = {}) {
+            const headers = { ...(options.headers || {}) };
+            if (agentInfo && agentInfo.sentry_token) {
+                headers['X-Sentry-Token'] = agentInfo.sentry_token;
+            }
+            if (!headers['Content-Type'] && options.body) {
+                headers['Content-Type'] = 'application/json';
+            }
+            return fetch(path, {
+                ...options,
+                headers,
+                credentials: 'same-origin',
+            });
+        }
+
+        async function agentPrintZpl(zplB64) {
+            if (!agentReachable) {
+                showAgentBanner();
+                return { status: 'error', message: 'Scale agent not running' };
+            }
+            // base64 -> Uint8Array for the raw binary POST body
+            const binStr = atob(zplB64);
+            const bytes = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+            try {
+                const r = await fetch(`${AGENT_BASE}/print`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/octet-stream' },
+                    body: bytes,
+                });
+                return await r.json();
+            } catch (e) {
+                return { status: 'error', message: 'Could not reach scale agent: ' + e.message };
+            }
+        }
+
+        async function agentScale() {
+            if (!agentReachable) {
+                showAgentBanner();
+                return { status: 'error', message: 'Scale agent not running' };
+            }
+            try {
+                const r = await fetch(`${AGENT_BASE}/scale`, { mode: 'cors' });
+                return await r.json();
+            } catch (e) {
+                return { status: 'error', message: 'Could not reach scale agent: ' + e.message };
+            }
+        }
+
+        bootstrapAgent();
 
         // Link modal state
         let linkStep = 'order';
@@ -866,8 +966,7 @@
             }
             document.getElementById('weight-val').innerText = "...";
             log("Reading Scale...");
-            fetch('/get_scale_weight')
-            .then(r => r.json())
+            agentScale()
             .then(scaleData => {
                 if (scaleData.status === 'success') {
                     const finalWeight = scaleData.weight;
@@ -884,16 +983,32 @@
         }
 
         function doShipRequest(payload) {
-            fetch('/ship_order', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
+            // Attach the station label so dockd can record it in the
+            // local shipping_history row. The agent's /whoami response
+            // is the source of truth; this is forwarded transparently.
+            if (agentInfo && agentInfo.station_id) {
+                payload.station_id = agentInfo.station_id;
+                payload.station_label = agentInfo.station_label || '';
+            }
+            dockdApi('/ship_order', {
+                method: 'POST',
+                body: JSON.stringify(payload),
             })
             .then(r => r.json())
-            .then(shipData => {
+            .then(async shipData => {
                 if (shipData.status === 'success') {
                     lastShippedOrderId = currentOrderId;
                     document.getElementById('btn-reprint-last').style.opacity = '1';
                     document.getElementById('btn-reprint-last').style.pointerEvents = 'auto';
+                    // Forward the ZPL bytes to the local scale agent for
+                    // printing. The dockd container has no printer; the
+                    // browser is the bridge.
+                    if (shipData.zpl_b64) {
+                        const printResult = await agentPrintZpl(shipData.zpl_b64);
+                        if (printResult.status !== 'success') {
+                            log('Print warning: ' + (printResult.message || 'unknown'));
+                        }
+                    }
                     let successMsg = `Tracking: ${shipData.tracking}`;
                     if (shipData.carrier_switched) successMsg += ' (carrier switched)';
                     document.getElementById('success-sub').innerText = successMsg;
@@ -1037,8 +1152,7 @@
             document.getElementById('box-display').innerText = `OB (${l}x${w}x${h})`;
             document.getElementById('weight-val').innerText = "...";
             log(`Original Box: ${l} x ${w} x ${h} - Reading Scale...`);
-            fetch('/get_scale_weight')
-            .then(r => r.json())
+            agentScale()
             .then(scaleData => {
                 if (scaleData.status === 'success') {
                     const finalWeight = scaleData.weight;
@@ -1277,7 +1391,7 @@
             const btn = document.getElementById('btn-link-submit');
             const originalText = btn.innerText;
             btn.innerText = 'UPDATING...'; btn.disabled = true;
-            fetch('/manual_link_tracking', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket, tracking: tracking }) })
+            dockdApi('/manual_link_tracking', { method: 'POST', body: JSON.stringify({ so_number: ticket, tracking: tracking }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -1302,10 +1416,14 @@
             const btn = document.getElementById('btn-reprint-submit');
             const originalText = btn.innerText;
             btn.innerText = "PRINTING..."; btn.disabled = true;
-            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket, station: STATION_ID }) })
+            dockdApi('/reprint_label', {
+                method: 'POST',
+                body: JSON.stringify({ so_number: ticket, station: STATION_ID }),
+            })
             .then(r => r.json())
-            .then(data => {
+            .then(async data => {
                 if (data.status === 'success') {
+                    if (data.zpl_b64) await agentPrintZpl(data.zpl_b64);
                     document.getElementById('reprint-modal').style.display = 'none';
                     document.getElementById('success-sub').innerText = `Reprinted Label for ${ticket}`;
                     document.getElementById('success-modal').style.display = 'flex';
@@ -1321,10 +1439,14 @@
             if (!lastShippedOrderId) return;
             const btn = document.getElementById('btn-reprint-last');
             btn.innerText = 'PRINTING...'; btn.style.pointerEvents = 'none';
-            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: lastShippedOrderId, station: STATION_ID }) })
+            dockdApi('/reprint_label', {
+                method: 'POST',
+                body: JSON.stringify({ so_number: lastShippedOrderId, station: STATION_ID }),
+            })
             .then(r => r.json())
-            .then(data => {
+            .then(async data => {
                 if (data.status === 'success') {
+                    if (data.zpl_b64) await agentPrintZpl(data.zpl_b64);
                     document.getElementById('success-sub').innerText = `Reprinted Last: ${lastShippedOrderId}`;
                     document.getElementById('success-modal').style.display = 'flex';
                     setTimeout(() => { document.getElementById('success-modal').style.display = 'none'; }, 2000);
@@ -1344,7 +1466,7 @@
             const btn = document.getElementById('btn-void-submit');
             const originalText = btn.innerText;
             btn.innerText = "VOIDING..."; btn.disabled = true;
-            fetch('/void_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ so_number: ticket }) })
+            dockdApi('/void_label', { method: 'POST', body: JSON.stringify({ so_number: ticket }) })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {

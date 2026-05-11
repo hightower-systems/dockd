@@ -150,7 +150,7 @@ class TestLoadOrderWithBackend:
 
 class TestShipOrderWithBackend:
 
-    def test_ship_order_happy_path(self, auth_client, mock_backend, mock_shiprush, mock_printer):
+    def test_ship_order_happy_path(self, auth_client, mock_backend, mock_shiprush):
         mock_backend.get_order.return_value = _sample_order(so_number='SO-7')
         mock_backend.confirm_shipped.return_value = ShipResult(
             status='SHIPPED',
@@ -164,12 +164,17 @@ class TestShipOrderWithBackend:
             'box_id': '1',
             'weight': 1.5,
             'ca_shipping_paid': 3.50,
+            'station_id': 'pack-station-1',
+            'station_label': 'Pack Station 1',
         })
         data = resp.get_json()
         assert data['status'] == 'success'
         assert data['tracking'] == '1Z999AA10123456784'
         assert data['sentry_fulfillment_id'] == 42
         assert data['sentry_audit_log_id'] == 9001
+        # Print flow flip (v0.3.0): zpl_b64 is returned for the
+        # browser to forward; the server no longer calls a printer.
+        assert data['zpl_b64'] == 'XlhBClRFU1QKXlha'
 
         # Backend was called for both load + confirm.
         mock_backend.get_order.assert_called_once_with('SO-7')
@@ -183,7 +188,7 @@ class TestShipOrderWithBackend:
         assert len(call.kwargs['idempotency_key']) == 36
 
     def test_ship_order_already_shipped(self, auth_client, mock_backend,
-                                        mock_shiprush, mock_printer):
+                                        mock_shiprush):
         mock_backend.get_order.return_value = _sample_order(so_number='SO-8')
         mock_backend.confirm_shipped.side_effect = AlreadyShippedError(
             error_kind='already_shipped',

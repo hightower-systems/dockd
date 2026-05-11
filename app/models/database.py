@@ -63,13 +63,27 @@ def init_ship_db():
             order_loaded_at TEXT,
             fulfillment_age_minutes REAL,
             ship_speed_seconds REAL,
-            carrier_switched INTEGER DEFAULT 0
+            carrier_switched INTEGER DEFAULT 0,
+            station_id TEXT,
+            station_label TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ship_history_order
             ON ship_history(order_number);
         CREATE INDEX IF NOT EXISTS idx_ship_history_date
             ON ship_history(shipped_at);
     """)
+    # Idempotent migration: for any pre-v0.3.0 DB the CREATE IF NOT
+    # EXISTS above is a no-op and the new columns are missing. SQLite
+    # has no ALTER TABLE ADD COLUMN IF NOT EXISTS, so we discover via
+    # PRAGMA + add when absent.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(ship_history)").fetchall()}
+    for col, ddl in (
+        ("station_id", "ALTER TABLE ship_history ADD COLUMN station_id TEXT"),
+        ("station_label", "ALTER TABLE ship_history ADD COLUMN station_label TEXT"),
+    ):
+        if col not in existing:
+            conn.execute(ddl)
+    conn.commit()
     conn.close()
     logger.info("Shipping history DB initialized")
 

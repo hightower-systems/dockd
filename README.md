@@ -3,7 +3,7 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.2.0-8e2716)
+  ![Version](https://img.shields.io/badge/version-0.3.0-8e2716)
   ![Tests](https://img.shields.io/badge/tests-137%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
@@ -59,11 +59,11 @@ carrier-side label generation; dockd decides which carrier to ask.
 
 | Layer | Technology |
 |-------|-----------|
-| Web app | Python / Flask  -  factory-built, blueprint-organized (`auth`, `shipping`, `settings`) |
-| Frontend | Server-rendered HTML + vanilla JavaScript (no framework dependency) |
+| Web app | Python / Flask  -  factory-built, blueprint-organized (`auth`, `shipping`, `settings`); runs in a container (Azure / Docker / wherever) |
+| Frontend | Server-rendered HTML + vanilla JavaScript (no framework dependency); on page load fetches `/whoami` from the local scale agent to capture station identity + Sentry token |
 | Storage | SQLite for shipping history + override audit; JSON for settings + users (chmod 600, atomic writes) |
-| Hardware bridge | Per-station agent (separate process) for USB scales (HID) + Zebra ZPL printing |
-| Order backend | Pluggable interface; Sentry-WMS implementation in progress |
+| Order backend | `OrderBackend` Protocol + `SentryBackend` HTTP client against Sentry-WMS v1.9 dockd surface; pluggable for other ERPs |
+| Scale agent | Per-station Python process at `127.0.0.1:5050` (`agent/agent.py`); owns USB HID scale + Zebra ZPL printer + HP LaserJet packing-slip printer. CORS pinned to dockd origin |
 
 ## Quick Start
 
@@ -149,22 +149,21 @@ and the backend-wired shipping routes (load / ship / manual-link / void).
 
 ## Project Status
 
-**v0.2.0** -- Sentry backend wired. `OrderBackend` Protocol + first
-implementation (`SentryBackend`) against Sentry-WMS's v1.9 dockd
-surface. ShippingService drives load / ship / void / manual-link
-through the backend with idempotent UUID4 keys; ShipRush remains the
-label generator. Frontend reads the actual response shape (fixed
-several pre-existing bugs where the legacy template read keys the
-backend never returned). Token source is `DOCKD_SENTRY_TOKEN` env as
-an interim until scale-agent v2 ships per-station tokens through
-`X-Sentry-Token`.
+**v0.3.0** -- Scale agent v2 + browser bootstrap. Each pack station
+runs the dockd scale agent at `127.0.0.1:5050` with CORS pinned to
+the dockd origin. Browser calls `/whoami` on page load to capture
+station identity + per-station Sentry token; forwards
+`X-Sentry-Token` on every dockd API call. Ship + reprint flows flip
+so the dockd container returns `zpl_b64` and the browser POSTs the
+bytes to its local agent's `/print`. Full deployment + per-station
+setup walkthrough at [`docs/STATION_SETUP.md`](docs/STATION_SETUP.md).
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
 | **v0.1.0** | **Foundation -- backend-agnostic Flask app, SettingsStore + UsersStore + forced password change, ShipRush + carrier engine + printer settings-driven, NetSuite removed from main** | ✅ Released |
 | **v0.2.0** | **Sentry backend wired -- `OrderBackend` Protocol + `SentryBackend` HTTP client against Sentry-WMS v1.9 dockd surface, ShippingService refactored, frontend so_number rename + dead-path cleanup** | ✅ Released |
-| v0.3.0 | `ship_attempts` SQLite for crash-recovery idempotency, `shipping_history.db` schema expansion, reprint-from-history endpoint | Planned |
-| v0.4.0 | `scale_agent.py` v2 (127.0.0.1-bound + CORS + `/whoami`), browser bootstrap fetches station identity + Sentry token, print flow flips to browser-forwards-ZPL-to-localhost | Planned |
+| **v0.3.0** | **Scale agent v2 + browser bootstrap -- agent binds 127.0.0.1, CORS pinned to dockd origin, /whoami endpoint, browser forwards X-Sentry-Token on every dockd call, print flow flips so dockd returns ZPL and the browser forwards to localhost agent, station_label persisted in shipping_history, docs/STATION_SETUP.md walkthrough** | ✅ Released |
+| v0.4.0 | `ship_attempts` SQLite for crash-recovery idempotency, `shipping_history.db` schema expansion, reprint-from-history endpoint | Planned |
 | v0.5.0 | Health-check polling + connectivity indicator in the operator UI, log redaction (`wms_t_*` patterns, PII), security regression suite | Planned |
 | v1.0.0 | Production release -- full Sentry-WMS integration, integration tests against a real Sentry instance, migration playbook from `v0.x` deployments | Planned |
 
@@ -178,4 +177,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.2.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.3.0

@@ -23,6 +23,13 @@ override.db
 _temp_label.zpl
 *.zpl
 
+# -- Scale-agent runtime (per-station laptop) --
+# agent_config.json holds the per-station Sentry bearer token. Never
+# commit it; each laptop maintains its own copy from agent_config.example.json.
+agent/agent_config.json
+agent/logs/
+agent/_temp_*
+
 # -- Python --
 __pycache__/
 *.py[cod]

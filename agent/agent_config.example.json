@@ -1,0 +1,19 @@
+{
+  "agent_port": 5050,
+
+  "station_id": "pack-station-1",
+  "station_label": "Pack Station 1",
+
+  "dockd_origin": "https://dockd.example.com",
+  "sentry_token": "",
+
+  "zebra_printer": "",
+  "hp_printer": "HPLASER",
+
+  "scale_vendor_id": "0x0b67",
+  "scale_product_id": "0x555e",
+
+  "log_dir": "logs",
+  "log_max_bytes": 5242880,
+  "log_backup_count": 3
+}

@@ -2,6 +2,158 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.3.0] - 2026-05-11
+
+"Scale agent v2 + browser bootstrap" release. Each pack station now
+runs the dockd scale agent locally, bound to `127.0.0.1` and CORS-
+pinned to the dockd origin. The browser fetches `/whoami` on page
+load to capture the station identity + per-station Sentry bearer
+token, then forwards `X-Sentry-Token` on every dockd API call. The
+ship + reprint flows flip: dockd returns `zpl_b64` in the response;
+the browser POSTs the bytes to its local agent's `/print` endpoint.
+The dockd container itself no longer touches printer hardware.
+
+This release reorders the v0.x roadmap: scale agent + browser
+bootstrap was originally planned for v0.4.0; ship_attempts SQLite
+idempotency was v0.3.0. Reordered because the agent file was
+unblocked and getting end-to-end Sentry -> dockd -> agent working at
+one station is more valuable than crash-recovery hardening on top of
+a not-yet-deployed flow.
+
+### Added -- Scale agent
+
+- **`agent/agent.py` (v2.0)** -- per-station Python process that
+  owns the USB HID scale, the Zebra ZPL label printer, and the HP
+  LaserJet packing-slip printer. Five endpoints:
+  - `GET /whoami` -- returns `station_id`, `station_label`,
+    `sentry_token`, `agent_version`. Browser caches in module-scope
+    memory; cleared on Chrome restart.
+  - `GET /scale` -- USB HID weight read with three-retry loop and
+    ounce-to-pound conversion when the scale reports unit code 11.
+  - `POST /print` -- accepts raw ZPL bytes from the browser, writes
+    to a temp file, sends to the Zebra via Windows
+    `cmd /c copy /B`.
+  - `POST /print-html` -- accepts HTML bytes, prints via
+    `ShellExecuteW('printto', ..., HP_PRINTER)` with a default-printer
+    fallback if the direct call fails.
+  - `GET /health` -- unauthenticated liveness with scale-connected
+    flag + agent version.
+- **`agent/agent_config.example.json`** -- v2 schema:
+  - Required: `station_id`, `station_label`, `dockd_origin`,
+    `sentry_token`.
+  - Optional: `agent_port` (5050), `zebra_printer` (auto-detect
+    `\\{ip}\ZEBRA` when blank), `hp_printer` (`HPLASER`),
+    `scale_vendor_id` / `scale_product_id` (Mettler / DYMO
+    defaults), `log_dir` / `log_max_bytes` / `log_backup_count`.
+  - Removed from the legacy v1 schema: `server_ip` (vestigial,
+    never read), `api_key` (replaced by 127.0.0.1 bind + CORS pin).
+- **`agent/requirements.txt`** -- `flask>=2.0`, `flask-cors>=4.0`,
+  `hidapi>=0.14`.
+- **`agent/README.md`** -- endpoint reference, Windows install
+  steps, config schema, and the security rationale for dropping
+  `X-Agent-Key`.
+
+### Added -- Browser bootstrap
+
+- **`/whoami` page-load fetch** in `index.html`. On reach: stashes
+  `station_id` / `station_label` / `sentry_token` in module-scope
+  globals; renders the station label in the sidebar footer. On
+  fail: drops a fixed red banner across the top
+  ("SCALE AGENT NOT RUNNING -- start agent.py on this station").
+- **`dockdApi(path, options)`** -- wrapper around `fetch` that
+  injects `X-Sentry-Token` on every dockd API call. All major
+  dockd-side fetches (`/get_order_details`, `/ship_order`,
+  `/manual_link_tracking`, `/reprint_label`, `/void_label`) now go
+  through it. Session-auth endpoints (`/login`, `/logout`,
+  `/api/change-password`, `/log_override`, `/ship_count`) stay on
+  bare `fetch` -- they don't need the Sentry token.
+- **`agentScale()`** -- replaces the server-side `/get_scale_weight`
+  endpoint. The dockd container has no scale hardware; the agent
+  on the laptop reads the USB scale directly.
+- **`agentPrintZpl(zpl_b64)`** -- decodes base64 to raw bytes and
+  POSTs to `http://localhost:5050/print`. Returns
+  `{status, message}` to the caller.
+
+### Changed -- Print flow flip
+
+- **`ShippingService.ship_order`** -- no longer calls
+  `self.printer.send()`. Includes `zpl_b64` in the success response
+  for the browser to forward to its local agent. The dockd container
+  is the wrong place to drive a station's printer; it lives in
+  Azure and the printer is on the laptop's LAN.
+- **`ShippingService.reprint`** -- same pattern. Returns
+  `zpl_b64` from the local label cache; browser forwards.
+- **`PrinterService`** -- still in the codebase but unused on the
+  ship path. Kept for back-compat with any legacy call site; will
+  be removed once nothing references it.
+- **`/get_scale_weight` route** -- still wired but unused. Frontend
+  now calls `agentScale()` directly. Server-side `ScaleReader` only
+  works if the dockd process and the USB scale are on the same
+  host, which is no longer the deployment model.
+
+### Added -- station_label persistence
+
+- **`ship_history.station_id` + `ship_history.station_label`**
+  columns. Added via `init_ship_db()` -- the CREATE includes them;
+  for pre-v0.3.0 databases, an idempotent `PRAGMA table_info` +
+  `ALTER TABLE ADD COLUMN` block adds them in place.
+- **`/ship_order` blueprint** accepts `station_id` + `station_label`
+  in the payload; the browser sources both from the agent's
+  `/whoami` response and forwards on every ship.
+- **`ShippingService._log_to_db`** writes both into `ship_history`.
+
+### Added -- Documentation
+
+- **`docs/STATION_SETUP.md`** -- full deployment + per-station
+  setup walkthrough in the same shape as the Sentry-WMS docs:
+  Part 1 dockd deploy, Part 2 station setup, Part 3 daily startup,
+  Part 4 troubleshooting, Part 5 admin operations, Quick Reference
+  Card at the end designed to be printed and taped to the wall.
+
+### Security
+
+- Scale agent binds `127.0.0.1` only -- no off-laptop reach.
+- CORS on the agent pinned to `dockd_origin` from config; a
+  third-party site an operator stumbles onto cannot script the
+  local hardware.
+- `agent_config.json` carries the per-station Sentry bearer token
+  and is now in `.gitignore` (alongside `agent/logs/` and
+  `agent/_temp_*`). Setup guide includes Windows `icacls` command
+  to lock it to the current user (chmod 600 equivalent).
+- Browser holds the bearer token in module-scope JS memory after
+  `/whoami` -- a malicious browser extension is the realistic
+  exposure surface; the recommended mitigation is dedicated kiosk
+  hardware with a controlled browser, plus token rotation when
+  exposure is suspected.
+
+### Removed -- legacy assumptions
+
+- **`X-Agent-Key` header on the agent** -- replaced by the
+  127.0.0.1 bind + CORS pin combination.
+- **`server_ip` config field on the agent** -- the central-server-
+  to-station-IP call direction is gone; the browser drives the
+  agent.
+- **Server-side print path in `ShippingService.ship_order` and
+  `.reprint`** -- the browser forwards now.
+
+### Tests
+
+- Updated `test_ship_order_happy_path` to assert on the new
+  `zpl_b64` field in the response (the browser-forwarding contract)
+  and to pass `station_id` + `station_label` in the request body.
+- 137 passing.
+
+### Open
+
+- **`ship_attempts` SQLite for crash-recovery idempotency** --
+  moved to `v0.4.0`. Persists `(idempotency_key, request_body,
+  status)` before any backend call so a crash mid-ship does not
+  lose the key. Restart retries the same UUID4 against Sentry,
+  which replays the cached response.
+- **Health-check polling + connectivity dot** in the operator UI
+  (`v0.5.0`).
+- **Log redaction** for `wms_t_*` tokens, PII (`v0.5.0`).
+
 ## [v0.2.0] - 2026-05-11
 
 "Sentry backend wired" release. The `OrderBackend` Protocol takes its

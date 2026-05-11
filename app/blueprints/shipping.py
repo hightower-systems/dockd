@@ -73,6 +73,8 @@ def ship_order():
         user=session.get('user', {}).get('name', 'Unknown'),
         order_loaded_at=data.get('order_loaded_at', ''),
         ff_created_at=data.get('ff_created_at', ''),
+        station_id=data.get('station_id'),
+        station_label=data.get('station_label'),
     )
     return jsonify(result)
 
