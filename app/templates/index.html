@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dockd</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&display=swap" rel="stylesheet">
+    <style>
+        .ship-count-bubble {
+            text-align: center;
+            background: #16a34a;
+            border-radius: 16px;
+            padding: 14px 12px;
+            margin: 10px 12px;
+            color: #fff;
+        }
+        .ship-count-label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            opacity: 0.85;
+        }
+        .ship-count-number {
+            font-size: 48px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-top: 2px;
+        }
+        :root {
+            --brand-red: #8e2716;
+            --brand-red-bright: #a83020;
+            --copper: #b87333;
+            --cream: #fdf4e3;
+            --card-tan: #f7f3ec;
+            --card-border: #e0d9cc;
+            --bg: #ffffff;
+            --text: #1a1a1a;
+            --text-muted: #999080;
+            --gray-accent: #a09b91;
+            --sidebar-dark: #2a2520;
+            --sidebar-card: #352f2a;
+            --success-green: #16a34a;
+            --error-red: #dc2626;
+            --border: rgba(142, 39, 22, 0.12);
+            --radius: 6px;
+            --radius-xl: 8px;
+            --fedex-purple: #4D148C;
+            --fedex-orange: #FF6600;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+            transition: background 0.4s ease;
+        }
+
+        /* ========== FEDEX MODE ========== */
+        body.fedex-active { background: linear-gradient(160deg, rgba(77,20,140,0.14) 0%, var(--cream) 28%, var(--cream) 72%, rgba(255,102,0,0.12) 100%); }
+        body.fedex-active .sidebar { background: linear-gradient(180deg, var(--fedex-purple) 0%, #6b21a8 30%, #1e0a33 100%); border-right-color: rgba(255,102,0,0.4); box-shadow: 4px 0 24px rgba(77,20,140,0.25); }
+        body.fedex-active .sidebar-logo { color: white; }
+        body.fedex-active .sidebar-logo span { opacity: 0.95; }
+        body.fedex-active .fedex-badge { display: flex !important; }
+        body.fedex-active .sidebar-btn { color: rgba(255,255,255,0.9); }
+        body.fedex-active .sidebar-btn:hover { background: rgba(255,102,0,0.35); color: white; }
+        body.fedex-active .sidebar-btn.exit-app-btn:hover { background: rgba(220,38,38,0.5); color: #fca5a5; }
+        body.fedex-active .user-badge { color: rgba(255,255,255,0.9); }
+        body.fedex-active #main-input { border-color: var(--fedex-orange); background: rgba(255,255,255,0.98); }
+        body.fedex-active #main-input:focus { border-color: var(--fedex-orange); box-shadow: 0 0 0 4px rgba(255,102,0,0.28); }
+        body.fedex-active .card { border-color: rgba(77,20,140,0.3); border-left-width: 6px; border-left-color: var(--fedex-orange); box-shadow: 0 4px 20px rgba(77,20,140,0.12); }
+        body.fedex-active .card h2 { color: var(--fedex-purple); }
+        body.fedex-active .order-info-box { border-color: rgba(77,20,140,0.2); background: linear-gradient(135deg, rgba(77,20,140,0.06) 0%, rgba(255,102,0,0.04) 100%); }
+        body.fedex-active #box-card.active { border-left-color: var(--fedex-orange) !important; }
+        body.fedex-active #scale-section { background: linear-gradient(135deg, var(--fedex-purple) 0%, #6b21a8 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 6px 16px rgba(77,20,140,0.35); }
+        body.fedex-active .weight-captured { background: var(--fedex-orange) !important; box-shadow: 0 0 24px rgba(255,102,0,0.5); }
+        body.fedex-active .status-log { border-color: rgba(77,20,140,0.25); background: linear-gradient(180deg, rgba(77,20,140,0.08) 0%, rgba(255,102,0,0.06) 100%); color: var(--text); }
+
+        .fedex-badge { display: none; align-items: center; justify-content: center; padding: 8px 12px; margin: 0 10px 14px; background: linear-gradient(90deg, var(--fedex-purple), var(--fedex-orange)); color: white; font-size: 0.65rem; font-weight: 800; letter-spacing: 0.18em; border-radius: 999px; text-transform: uppercase; box-shadow: 0 2px 12px rgba(77,20,140,0.5); }
+
+        /* --- SIDEBAR --- */
+        .sidebar { width: 200px; min-width: 200px; background: var(--sidebar-dark); border-right: 1px solid rgba(142, 39, 22, 0.45); display: flex; flex-direction: column; flex-shrink: 0; transition: background 0.4s, border-color 0.4s, box-shadow 0.4s; }
+        .sidebar-logo { padding: 20px 16px 16px; font-size: 0.9rem; font-weight: 800; color: rgba(255,255,255,0.95); letter-spacing: 0.02em; border-bottom: 1px solid rgba(142, 39, 22, 0.4); }
+        .sidebar-logo span { font-weight: 600; opacity: 0.85; }
+        .sidebar-nav { padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; }
+        .sidebar-btn { width: 100%; padding: 12px 14px; border: none; border-radius: 8px; background: transparent; color: rgba(255,255,255,0.85); font-family: inherit; font-size: 0.875rem; font-weight: 600; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s, color 0.2s; }
+        .sidebar-btn:hover { background: rgba(142, 39, 22, 0.5); color: white; }
+        .sidebar-btn.exit-app-btn:hover { background: rgba(220, 38, 38, 0.4); color: #fca5a5; }
+        .sidebar-spacer { flex: 1; min-height: 20px; }
+        .sidebar-footer { padding: 14px 10px; border-top: 1px solid rgba(142, 39, 22, 0.4); }
+        .user-badge { font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.65); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; padding: 0 4px; }
+        .sidebar-footer .sidebar-btn { padding: 10px 14px; font-size: 0.8125rem; }
+
+        /* --- SHIP ORDERS NAV (hidden until ship module active) --- */
+        #ship-nav { display: none; }
+
+        /* --- MAIN CONTENT AREA --- */
+        .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* ========== SHIP ORDERS PANEL ========== */
+        #ship-panel { display: none; flex-direction: column; height: 100%; }
+
+
+
+        .scan-container { flex-shrink: 0; padding: 24px 32px; background: linear-gradient(180deg, var(--bg) 0%, var(--cream) 100%); border-bottom: 1px solid var(--border); display: flex; justify-content: center; align-items: center; }
+        #main-input { width: 100%; max-width: 560px; padding: 14px 24px; font-size: 1rem; font-family: inherit; border: 1px solid var(--brand-red); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); text-align: center; transition: border-color 0.15s, box-shadow 0.15s; }
+        #main-input::placeholder { color: var(--text-muted); }
+        #main-input:focus { border-color: var(--brand-red-bright); box-shadow: 0 0 0 2px rgba(142, 39, 22, 0.15); }
+
+        .workspace { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; padding: 24px 32px; flex-grow: 1; overflow: hidden; height: 0; }
+
+        .card { background: var(--card-tan); border-radius: var(--radius-xl); padding: 24px; border: 1px solid var(--card-border); border-left: 4px solid var(--brand-red); box-shadow: 0 1px 4px rgba(0,0,0,0.04); display: flex; flex-direction: column; height: 100%; overflow: hidden; transition: border-color 0.3s, box-shadow 0.3s; }
+
+        h2 { color: var(--brand-red); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; padding-bottom: 12px; margin: 0 0 16px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+        .order-info-box { background: rgba(142, 39, 22, 0.04); padding: 16px 18px; border-radius: 4px; margin-bottom: 18px; font-size: 1.125rem; line-height: 1.7; flex-shrink: 0; border: 1px solid var(--card-border); }
+        .order-info-box p { margin: 5px 0; }
+        .order-info-box strong { font-weight: 700; color: var(--text); }
+
+        .item-list { flex-grow: 1; height: 0; overflow-y: auto; border: 1px solid var(--card-border); border-radius: var(--radius); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; align-content: start; background: var(--cream); }
+        .item-row { padding: 12px 14px; border: 1px solid var(--card-border); border-radius: var(--radius); display: flex; justify-content: space-between; align-items: center; background: var(--bg); transition: border-color 0.2s, background 0.2s; }
+        .item-row.completed { background: rgba(22, 163, 74, 0.08); border-left: 3px solid var(--success-green); border-color: rgba(22, 163, 74, 0.35); }
+
+        .sku { font-weight: 700; font-size: 0.9375rem; }
+        .desc { font-size: 0.8125rem; color: var(--text-muted); }
+
+        .qty-badge { background: var(--brand-red); color: white; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 0.8125rem; margin-right: 12px; white-space: nowrap; flex-shrink: 0; }
+        .item-row.completed .qty-badge { background: var(--success-green); }
+
+        .manual-btn { background: var(--brand-red); border: none; color: white; width: 32px; height: 32px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; margin-left: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s; }
+        .manual-btn:hover { background: var(--brand-red-bright); }
+        .item-row.completed .manual-btn { display: none; }
+
+        #box-card { opacity: 0.5; pointer-events: none; transition: opacity 0.3s; }
+        #box-card.active { opacity: 1; pointer-events: all; border-left-color: var(--success-green) !important; }
+
+        .box-row { display: flex; gap: 14px; margin-bottom: 20px; align-items: stretch; flex-shrink: 0; }
+        .current-box { flex: 1; font-size: 1rem; font-weight: 700; color: var(--text); padding: 16px; border: 1px dashed var(--card-border); border-radius: 4px; text-align: center; background: var(--cream); display: flex; align-items: center; justify-content: center; }
+
+        .scale-section { flex: 1; background: var(--brand-red); color: white; border-radius: 4px; padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: background 0.3s, box-shadow 0.3s; }
+        .weight-display { font-size: 2rem; font-weight: 800; line-height: 1; }
+        .weight-unit { font-size: 0.7rem; opacity: 0.9; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+        .weight-captured { animation: flashWhite 0.5s; background-color: var(--success-green) !important; }
+
+        @keyframes flashWhite { 0% { background-color: var(--brand-red); } 50% { background-color: #22c55e; } 100% { background-color: var(--brand-red); } }
+
+        .status-log { flex-grow: 1; background: var(--cream); color: var(--text-muted); padding: 14px; border-radius: 4px; font-size: 0.8125rem; font-family: ui-monospace, monospace; overflow-y: auto; height: 0; border: 1px solid var(--card-border); }
+        .log-entry { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+        .log-entry:last-child { border-bottom: none; }
+
+        /* --- LOGIN --- */
+        #login-overlay { position: fixed; inset: 0; background: linear-gradient(160deg, var(--brand-red) 0%, #4a1209 100%); z-index: 5000; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; transition: transform 0.3s ease-in-out; }
+        #login-overlay h1 { font-size: 2.5rem; font-weight: 800; margin-bottom: 0; letter-spacing: 0.04em; }
+        #login-overlay p { opacity: 0.6; margin-top: 10px; font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+
+        .pass-box { background: var(--bg); padding: 48px 52px; border-radius: 8px; text-align: center; box-shadow: 0 16px 48px rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.1); }
+        .pass-box h2 { font-size: 1.4rem; letter-spacing: 0.04em; }
+        .pass-input { font-size: 1.2rem; padding: 15px 20px; margin-top: 16px; width: 280px; text-align: center; border: 1px solid #ccc; border-radius: 6px; outline: none; }
+        .pass-input:focus { border-color: var(--brand-red); box-shadow: 0 0 0 2px rgba(142,39,22,0.18); }
+
+        /* --- MODALS --- */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(8px); z-index: 2000; justify-content: center; align-items: center; }
+        .modal-content { background: var(--bg); padding: 36px 44px; text-align: center; border-radius: var(--radius-xl); width: 420px; position: relative; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.18); border: 1px solid var(--border); }
+        .link-modal-content { width: 88vw; max-width: 740px; height: 90vh; max-height: 90vh; display: flex; flex-direction: column; border: 2px solid var(--card-border); padding: 32px; text-align: left; border-radius: var(--radius-xl); }
+        #link-modal .modal-content h1 { color: var(--text) !important; }
+        #link-modal .modal-content #btn-link-submit { background: var(--brand-red) !important; border: none; border-radius: 10px; font-weight: 700; }
+        #reprint-modal .modal-content, #void-modal .modal-content { border: 2px solid var(--card-border); }
+        #reprint-modal .modal-content h1, #void-modal .modal-content h1 { color: var(--text) !important; }
+        #reprint-modal .modal-content #btn-reprint-submit, #void-modal .modal-content #btn-void-submit { background: var(--brand-red) !important; border: none; border-radius: 10px; font-weight: 700; }
+        .link-item-list { border: 2px solid var(--card-border); border-radius: 10px; padding: 12px; flex: 1; min-height: 280px; overflow-y: auto; background: var(--cream); }
+        #success-modal .modal-content { border: 2px solid var(--success-green); }
+        #error-modal .modal-content { border: 2px solid var(--error-red); }
+        #pickup-modal .modal-content { width: 540px; padding: 52px 48px; border: 3px solid #d35400; box-shadow: 0 24px 48px rgba(211,84,0,0.2); }
+        #pickup-modal .modal-content button { border-radius: 12px; font-weight: 800; }
+        .close-x { position: absolute; top: 18px; right: 22px; font-size: 1.5rem; font-weight: 400; color: var(--text-muted); cursor: pointer; line-height: 1; padding: 6px; border-radius: 4px; }
+        .close-x:hover { color: var(--text); background: var(--cream); }
+    </style>
+</head>
+<body>
+
+    <!-- ====== LOGIN OVERLAY ====== -->
+    <div id="login-overlay">
+        <h1 style="margin-bottom: 0;">DOCKD</h1>
+        <p style="opacity: 0.7; margin-top: 5px;">LOGIN</p>
+        <div class="pass-box" style="margin-top: 24px;">
+            <input type="text" id="login-user-input" class="pass-input" placeholder="USERNAME" autocomplete="off" style="margin-bottom: 12px;">
+            <input type="password" id="pass-input" class="pass-input" placeholder="PASSWORD" autocomplete="off">
+            <div id="login-error" style="color:#dc2626; font-weight:700; font-size:0.95rem; margin-top:12px; min-height:22px;"></div>
+            <button onclick="attemptLogin()" style="margin-top: 16px; background: var(--brand-red); color: white; border: none; padding: 16px 40px; font-size: 18px; font-weight: 800; border-radius: 8px; cursor: pointer; width: 100%;">LOGIN</button>
+        </div>
+    </div>
+
+    <div id="change-password-overlay" style="display:none; position:fixed; inset:0; background:rgba(20,15,10,0.95); z-index:9999; align-items:center; justify-content:center; color:white;">
+        <div style="background:#2a2520; padding:32px 40px; border-radius:10px; min-width:340px; max-width:420px; text-align:center;">
+            <h2 style="margin:0 0 8px 0; color:#fdf4e3; letter-spacing:1px;">SET A NEW PASSWORD</h2>
+            <p id="change-pw-intro" style="margin:0 0 20px 0; opacity:0.75; font-size:14px;">Your account is using the default password. Choose a new one to continue.</p>
+            <input type="password" id="change-pw-current" placeholder="CURRENT PASSWORD" autocomplete="off"
+                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
+            <input type="password" id="change-pw-new" placeholder="NEW PASSWORD" autocomplete="off"
+                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
+            <input type="password" id="change-pw-confirm" placeholder="CONFIRM NEW PASSWORD" autocomplete="off"
+                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
+            <div id="change-pw-error" style="color:#fca5a5; font-weight:700; font-size:13px; min-height:18px; margin-bottom:10px;"></div>
+            <button onclick="submitPasswordChange()" style="background:#8e2716; color:white; border:none; padding:14px 32px; font-size:16px; font-weight:800; border-radius:6px; cursor:pointer; width:100%;">UPDATE PASSWORD</button>
+            <p style="font-size:11px; opacity:0.45; margin:14px 0 0 0;">Sign out via the sidebar to abort.</p>
+        </div>
+    </div>
+
+    <!-- ====== SHIP ORDERS MODALS ====== -->
+    <div id="choice-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid var(--brand-red);">
+            <h2 style="color:var(--brand-red); margin-top:0;">SELECT BOX</h2>
+            <p style="margin-bottom:20px;">Multiple open shipments found.</p>
+            <div id="choice-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+            <button onclick="document.getElementById('choice-modal').style.display='none'" style="margin-top:20px; background:none; border:none; text-decoration:underline; cursor:pointer;">Cancel</button>
+        </div>
+    </div>
+
+    <div id="pickup-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 6px solid #d35400;">
+            <span class="close-x" onclick="confirmPickup()">&times;</span>
+            <h1 style="color: #d35400; font-size: 60px; margin: 0; font-weight: 800;">STOP</h1>
+            <h2 style="margin: 10px 0 20px 0; font-size: 30px; color: #333;">LOCAL PICKUP</h2>
+            <p style="font-size: 18px; margin-bottom: 5px;">This is a <strong>Local Pickup</strong> order.</p>
+            <p style="font-size: 18px; color: #666;">Do not print a label. Place in Pickup Bin.</p>
+            <button onclick="confirmPickup()" style="background: #d35400; color: white; border: none; padding: 20px 40px; font-size: 20px; font-weight: 800; border-radius: 8px; cursor: pointer; margin-top: 25px;">CONFIRM & CLEAR</button>
+        </div>
+    </div>
+
+    <div id="link-modal" class="modal-overlay">
+        <div class="modal-content link-modal-content">
+            <span class="close-x" onclick="closeLinkModal()">&times;</span>
+            <h1 style="color: #6E6259; margin: 0;">MERGE ORDER</h1>
+            <p style="color: #666; margin-bottom: 12px;">Scan order - verify items - then scan tracking.</p>
+            <div id="link-step-order" style="text-align: left;">
+                <label style="font-weight: 800; display: block;">1. SCAN CHILD ORDER</label>
+                <input type="text" id="link-scan-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID..." autocomplete="off">
+            </div>
+            <div id="link-step-verify" style="display: none; flex: 1; min-height: 0; flex-direction: column;">
+                <p style="margin: 0 0 8px 0;"><strong>Order:</strong> <span id="link-order-display">-</span></p>
+                <label style="font-weight: 800; display: block; margin-bottom: 6px;">2. SCAN ITEMS TO VERIFY</label>
+                <div id="link-item-list" class="link-item-list"></div>
+                <input type="text" id="link-verify-input" class="pass-input" style="width: 100%; box-sizing: border-box; margin-top: 10px;" placeholder="Scan each item..." autocomplete="off">
+            </div>
+            <div id="link-step-tracking" style="display: none; text-align: left;">
+                <p style="margin: 0 0 12px 0;"><strong>Order:</strong> <span id="link-order-display2">-</span></p>
+                <label style="font-weight: 800; display: block;">3. SCAN TRACKING #</label>
+                <input type="text" id="link-track-input" class="pass-input" style="width: 100%; box-sizing: border-box; margin-bottom: 12px;" placeholder="Scan Tracking Label..." autocomplete="off">
+                <button onclick="submitLink()" id="btn-link-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">LINK TRACKING</button>
+            </div>
+            <div id="link-choice-box" style="display: none; margin-top: 10px;">
+                <p style="font-weight: 800; margin-bottom: 8px;">Multiple open shipments - select one:</p>
+                <div id="link-choice-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="reprint-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #6E6259; width: 500px;">
+            <span class="close-x" onclick="closeReprintModal()">&times;</span>
+            <h1 style="color: #6E6259; margin: 0;">REPRINT LABEL</h1>
+            <p style="color: #666; margin-bottom: 20px;">Scan order to re-print existing label.</p>
+            <div style="text-align: left; margin-bottom: 25px;">
+                <label style="font-weight: 800; display: block;">SCAN ORDER ID</label>
+                <input type="text" id="reprint-order-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID...">
+            </div>
+            <button onclick="submitReprint()" id="btn-reprint-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">PRINT LABEL</button>
+        </div>
+    </div>
+
+    <div id="void-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #6E6259; width: 500px;">
+            <span class="close-x" onclick="closeVoidModal()">&times;</span>
+            <h1 style="color: #6E6259; margin: 0;">VOID LABEL</h1>
+            <p style="color: #666; margin-bottom: 20px;">Scan order to VOID shipping label.</p>
+            <div style="text-align: left; margin-bottom: 25px;">
+                <label style="font-weight: 800; display: block;">SCAN ORDER ID</label>
+                <input type="text" id="void-order-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID...">
+            </div>
+            <button onclick="submitVoid()" id="btn-void-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">VOID LABEL</button>
+        </div>
+    </div>
+
+    <div id="carrier-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #e67e22; width: 480px; padding: 40px 44px;">
+            <h1 style="color: #e67e22; margin: 0 0 6px 0; font-size: 28px; text-align: center;">CARRIER SUGGESTION</h1>
+            <p id="carrier-reason" style="color: #555; font-size: 15px; margin-bottom: 14px;"></p>
+            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 14px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="carrier-order-total">-</span></p>
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="carrier-ca-shipping">-</span></p>
+            </div>
+            <div id="carrier-wizard" style="background: #fffbe6; border: 1px solid #ffe0a0; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; text-align: left; font-size: 13px; line-height: 1.6; color: #555;"></div>
+            <div style="display: flex; gap: 14px; justify-content: center;">
+                <button id="btn-carrier-suggested" onclick="shipWithCarrier('suggested')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white;"></button>
+                <button id="btn-carrier-original" onclick="shipWithCarrier('original')" style="flex: 1; padding: 22px 10px; font-size: 16px; font-weight: 700; border-radius: 12px; border: 2px solid #ccc; cursor: pointer; background: #f5f5f5; color: #555;"></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="amazon-carrier-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #ff9900; width: 500px; padding: 40px 44px;">
+            <h1 style="color: #ff9900; margin: 0 0 6px 0; font-size: 26px;">AMAZON ORDER</h1>
+            <p style="color: #555; font-size: 15px; margin-bottom: 6px;">Shipping method detected:</p>
+            <p id="amazon-method-display" style="color: #333; font-size: 17px; font-weight: 700; margin-bottom: 14px;"></p>
+            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="amazon-order-total">-</span></p>
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="amazon-ca-shipping">-</span></p>
+            </div>
+            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Select a carrier for this shipment:</p>
+            <div style="display: flex; gap: 14px; justify-content: center;">
+                <button onclick="selectAmazonCarrier('USPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #003087;">USPS</button>
+                <button onclick="selectAmazonCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="highvalue-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #dc2626; width: 500px; padding: 40px 44px;">
+            <h1 style="color: #dc2626; margin: 0 0 6px 0; font-size: 26px;">HIGH VALUE ORDER</h1>
+            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="highvalue-total">-</span></p>
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="highvalue-ca-shipping">-</span></p>
+            </div>
+            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">USPS shipping detected - switch carrier for claims protection?</p>
+            <div style="display: flex; gap: 14px; justify-content: center;">
+                <button onclick="selectHighValueCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS Ground</button>
+                <button onclick="selectHighValueCarrier('FEDEX_ONE_RATE_2DAY')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4D148C;">FedEx 2Day</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="change-carrier-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #2563eb; width: 500px; padding: 40px 44px;">
+            <span class="close-x" onclick="closeChangeCarrierModal()">&times;</span>
+            <h1 style="color: #2563eb; margin: 0 0 6px 0; font-size: 26px;">CHANGE SHIPPING METHOD</h1>
+            <p style="color: #555; font-size: 15px; margin-bottom: 6px;">Current: <strong id="change-carrier-current" style="color: #333;"></strong></p>
+            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="change-order-total">-</span></p>
+                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="change-ca-shipping">-</span></p>
+            </div>
+            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Select a new carrier:</p>
+            <div style="display: flex; gap: 14px; justify-content: center;">
+                <button onclick="applyManualCarrier('USPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #003087;">USPS</button>
+                <button onclick="applyManualCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS</button>
+                <button onclick="applyManualCarrier('FEDEX_ONE_RATE_2DAY')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4D148C;">FedEx 2Day</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="ob-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 5px solid #2563eb; width: 420px; padding: 40px 44px;">
+            <h1 style="color: #2563eb; margin: 0 0 10px 0; font-size: 26px;">ORIGINAL BOX</h1>
+            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Enter box dimensions (inches):</p>
+            <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 24px;">
+                <div style="flex: 1; text-align: center;">
+                    <label style="font-weight: 700; font-size: 14px; color: #555;">Length</label>
+                    <input type="number" id="ob-length" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+                </div>
+                <div style="flex: 1; text-align: center;">
+                    <label style="font-weight: 700; font-size: 14px; color: #555;">Width</label>
+                    <input type="number" id="ob-width" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+                </div>
+                <div style="flex: 1; text-align: center;">
+                    <label style="font-weight: 700; font-size: 14px; color: #555;">Height</label>
+                    <input type="number" id="ob-height" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+                </div>
+            </div>
+            <div style="display: flex; gap: 14px; justify-content: center;">
+                <button onclick="confirmOB()" style="flex: 1; padding: 18px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #2563eb;">CONFIRM</button>
+                <button onclick="cancelOB()" style="flex: 1; padding: 18px 10px; font-size: 16px; font-weight: 700; border-radius: 12px; border: 2px solid #ccc; cursor: pointer; background: #f5f5f5; color: #555;">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="error-modal" class="modal-overlay">
+        <div class="modal-content">
+            <span class="close-x" onclick="closeErrorModal()">&times;</span>
+            <h1 style="color:var(--error-red); margin:0;">ERROR</h1>
+            <p id="error-msg" style="text-align: left; font-family: monospace; font-size: 12px;">...</p>
+        </div>
+    </div>
+
+    <div id="cancelled-modal" class="modal-overlay">
+        <div class="modal-content" style="border: 6px solid #dc2626; width: 520px; padding: 48px 44px;">
+            <h1 style="color: #dc2626; font-size: 60px; margin: 0; font-weight: 800;">STOP</h1>
+            <h2 style="margin: 10px 0 12px 0; font-size: 28px; color: #dc2626; border: none; padding: 0; letter-spacing: 0.02em; text-transform: none;">ORDER CANCELLED</h2>
+            <p style="font-size: 17px; color: #333; margin-bottom: 6px;">This order was <strong>cancelled by the customer</strong>.</p>
+            <p style="font-size: 15px; color: #555; margin-bottom: 6px;">Amazon Order: <strong id="cancelled-amazon-id" style="color: #dc2626;">-</strong></p>
+            <p style="font-size: 15px; color: #555; margin-bottom: 24px;">Cancelled: <strong id="cancelled-at-display">-</strong></p>
+            <p style="font-size: 16px; color: #dc2626; font-weight: 700; margin-bottom: 24px;">DO NOT SHIP -- Pull this order from the line.</p>
+            <button onclick="confirmCancelled()" style="background: #dc2626; color: white; border: none; padding: 20px 40px; font-size: 20px; font-weight: 800; border-radius: 12px; cursor: pointer; width: 100%;">CONFIRM & CLEAR</button>
+        </div>
+    </div>
+
+    <div id="success-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h1 style="color:var(--success-green); margin:0;">Success!</h1>
+            <p id="success-sub">Printing Label...</p>
+        </div>
+    </div>
+
+    <!-- ====== SIDEBAR ====== -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">DOCKD <span>Shipping</span></div>
+        <div class="fedex-badge">FedEx</div>
+        <nav class="sidebar-nav">
+            <div id="ship-nav">
+                <button type="button" class="sidebar-btn" onclick="softReset()" title="Reset Screen (Esc)">CLEAR</button>
+                <button type="button" class="sidebar-btn" onclick="openVoidModal()">VOID</button>
+                <button type="button" class="sidebar-btn" onclick="openLinkModal()">LINK</button>
+                <button type="button" class="sidebar-btn" onclick="openReprintModal()">REPRINT</button>
+                <button type="button" class="sidebar-btn" id="btn-reprint-last" onclick="reprintLast()" style="opacity:0.4; pointer-events:none;">REPRINT LAST</button>
+                <button type="button" class="sidebar-btn" id="btn-change-carrier" onclick="openChangeCarrierModal()" style="opacity:0.4; pointer-events:none;">CHANGE SHIP</button>
+            </div>
+        </nav>
+        <div id="ship-count-display" class="ship-count-bubble" style="display:none;">
+          <div class="ship-count-label">SHIPPED TODAY</div>
+          <div id="ship-count-number" class="ship-count-number">0</div>
+        </div>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-footer">
+            <div class="user-badge" id="display-user">...</div>
+            {% if current_user and current_user.role == 'admin' %}
+            <a class="sidebar-btn" href="/settings" style="text-decoration:none;">SETTINGS</a>
+            {% endif %}
+            <button type="button" class="sidebar-btn" onclick="logout()">LOGOUT</button>
+            {% if current_user and current_user.role == 'admin' %}
+            <button type="button" class="sidebar-btn exit-app-btn" onclick="shutdownApp()">EXIT</button>
+            {% endif %}
+            <div style="text-align:center;font-size:0.65rem;color:rgba(255,255,255,0.3);margin-top:6px;">v{{ config.VERSION }}</div>
+        </div>
+    </aside>
+
+    <!-- ====== MAIN CONTENT ====== -->
+    <main class="app-main">
+
+        <!-- DASHBOARD HUB -->
+        <div id="dashboard-panel" style="display:none;"></div>
+
+        <!-- SHIP ORDERS PANEL -->
+        <div id="ship-panel" style="display:none; flex-direction:column; height:100%;">
+            <div class="scan-container">
+                <input type="text" id="main-input" placeholder="Scan Order ID..." autocomplete="off">
+            </div>
+            <div class="workspace">
+                <div class="card">
+                    <h2>Items to Pack</h2>
+                    <div class="order-info-box" style="display: flex; gap: 32px;">
+                        <div style="flex: 1;">
+                            <p><strong>Order:</strong> <span id="order-id-display">Waiting for scan...</span></p>
+                            <p><strong>Customer:</strong> <span id="cust-name">Waiting for scan...</span></p>
+                            <p><strong>Phone:</strong> <span id="cust-phone">Waiting for scan...</span></p>
+                            <p><strong>Address:</strong> <span id="cust-addr">Waiting for scan...</span></p>
+                        </div>
+                        <div style="text-align: right; white-space: nowrap;">
+                            <p><strong>Ship Via:</strong> <span id="ship-via">Waiting for scan...</span></p>
+                            <p><strong>Order Total:</strong> <span id="order-total-display">-</span></p>
+                            <p><strong>CA Shipping Paid:</strong> <span id="ca-shipping-paid">-</span></p>
+                        </div>
+                    </div>
+                    <div class="item-list" id="item-list">
+                        <div style="padding:40px; text-align:center; color:#999; font-style:italic; grid-column: span 2;">Scan Order ID to begin</div>
+                    </div>
+                </div>
+                <div class="card" id="box-card">
+                    <h2 id="box-header-text">Pending Items...</h2>
+                    <div class="box-row">
+                        <div class="current-box" id="box-display">WAITING</div>
+                        <div class="scale-section" id="scale-section">
+                            <div class="weight-display" id="weight-val">---</div>
+                            <div class="weight-unit">LBS</div>
+                        </div>
+                    </div>
+                    <h2>Station Log</h2>
+                    <div class="status-log" id="status-log">
+                        <div class="log-entry">> System Ready</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <script>
+        const STATION_ID = new URLSearchParams(window.location.search).get('station') || '2';
+        let currentUser = null;
+        let currentOrderId = null;
+        let currentFulfillmentId = null;
+        let itemsNeeded = [];
+        let selectedUserTemp = '';
+        let isFedExMode = false;
+        let activePanel = 'dashboard'; // 'dashboard' | 'ship'
+        let lastShippedOrderId = null;
+        let pendingShipPayload = null;
+        let pendingCarrierConflict = null;
+        let amazonCarrierOverride = null;
+        let highValueCarrierOverride = null;
+        let currentCaShippingPaid = 0;
+        let currentOrderTotal = 0;
+        let orderLoadedAt = null;
+        let currentFfCreatedAt = '';
+        let currentAmazonOrderId = '';
+        let manualCarrierOverride = null;
+        const overrideExceptions = new Set({{ override_exceptions | tojson }});
+
+        // Runtime settings fetched from /api/settings/public on page load.
+        // Defaults are conservative fallbacks if the fetch fails; the
+        // server is the source of truth for these values.
+        let HIGH_VALUE_THRESHOLD = 200;
+        let AMAZON_METHODS = [];
+
+        async function loadPublicSettings() {
+            try {
+                const r = await fetch('/api/settings/public', { credentials: 'same-origin' });
+                if (!r.ok) return;
+                const data = await r.json();
+                if (typeof data.high_value_threshold === 'number') {
+                    HIGH_VALUE_THRESHOLD = data.high_value_threshold;
+                }
+                if (Array.isArray(data.amazon_methods)) {
+                    AMAZON_METHODS = data.amazon_methods;
+                }
+            } catch (e) {
+                // Network blip on page load: keep defaults, ship continues to work.
+            }
+        }
+        loadPublicSettings();
+
+        // Link modal state
+        let linkStep = 'order';
+        let linkOrderId = null;
+        let linkItemsNeeded = [];
+        let linkPendingOrderTicket = null;
+
+        // ====== PANEL NAVIGATION ======
+        function showDashboard() {
+            document.getElementById('dashboard-panel').style.display = 'flex';
+            document.getElementById('ship-panel').style.display = 'none';
+            document.getElementById('ship-nav').style.display = 'none';
+            document.getElementById('ship-count-display').style.display = 'none';
+            document.body.classList.remove('fedex-active');
+            activePanel = 'dashboard';
+        }
+
+        async function updateShipCount() {
+            try {
+                const res = await fetch('/ship_count');
+                const data = await res.json();
+                document.getElementById('ship-count-number').innerText = data.count;
+            } catch(e) {}
+        }
+
+        function showShipOrders() {
+            document.getElementById('dashboard-panel').style.display = 'none';
+            document.getElementById('ship-panel').style.display = 'flex';
+            document.getElementById('ship-nav').style.display = 'block';
+            document.getElementById('ship-count-display').style.display = 'block';
+            activePanel = 'ship';
+            updateShipCount();
+            setTimeout(() => document.getElementById('main-input').focus(), 100);
+        }
+
+        // ====== AUTO-LOGIN from server session ======
+        {% if current_user %}
+        (function() {
+            currentUser = {{ current_user | tojson }};
+            document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
+            document.getElementById('display-user').innerText = currentUser.name;
+            if (currentUser.must_change_password) {
+                openChangePasswordOverlay('');
+            } else {
+                showShipOrders();
+            }
+        })();
+        {% endif %}
+
+        // ====== LOGIN ======
+        document.getElementById('pass-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') attemptLogin();
+        });
+        document.getElementById('login-user-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') document.getElementById('pass-input').focus();
+        });
+
+        function attemptLogin() {
+            const user = document.getElementById('login-user-input').value.trim();
+            const pw = document.getElementById('pass-input').value;
+            if (!user || !pw) return;
+            fetch('/login', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username: user, password: pw })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    currentUser = data.user;
+                    document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
+                    document.getElementById('display-user').innerText = currentUser.name;
+                    if (currentUser.must_change_password) {
+                        openChangePasswordOverlay(pw);
+                    } else {
+                        showShipOrders();
+                    }
+                } else {
+                    document.getElementById('login-error').textContent = data.message || "Invalid credentials";
+                    document.getElementById('pass-input').value = '';
+                }
+            });
+        }
+
+        function openChangePasswordOverlay(prefillCurrent) {
+            const overlay = document.getElementById('change-password-overlay');
+            overlay.style.display = 'flex';
+            document.getElementById('change-pw-error').textContent = '';
+            const current = document.getElementById('change-pw-current');
+            current.value = prefillCurrent || '';
+            document.getElementById('change-pw-new').value = '';
+            document.getElementById('change-pw-confirm').value = '';
+            (prefillCurrent ? document.getElementById('change-pw-new') : current).focus();
+        }
+
+        function submitPasswordChange() {
+            const cur = document.getElementById('change-pw-current').value;
+            const next = document.getElementById('change-pw-new').value;
+            const confirmPw = document.getElementById('change-pw-confirm').value;
+            const errEl = document.getElementById('change-pw-error');
+            errEl.textContent = '';
+            if (!cur || !next) { errEl.textContent = 'All fields required.'; return; }
+            if (next.length < 4) { errEl.textContent = 'New password must be at least 4 characters.'; return; }
+            if (next !== confirmPw) { errEl.textContent = 'New passwords do not match.'; return; }
+            if (next === cur) { errEl.textContent = 'New password must differ from the current one.'; return; }
+            fetch('/api/change-password', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ current_password: cur, new_password: next }),
+            })
+            .then(r => r.json().then(body => ({ ok: r.ok, body })))
+            .then(({ ok, body }) => {
+                if (ok && body.status === 'ok') {
+                    document.getElementById('change-password-overlay').style.display = 'none';
+                    if (currentUser) currentUser.must_change_password = false;
+                    showShipOrders();
+                } else {
+                    errEl.textContent = body.message || 'Could not update password.';
+                }
+            })
+            .catch(() => { errEl.textContent = 'Network error. Try again.'; });
+        }
+
+        function logout() {
+            fetch('/logout', {method: 'POST'});
+            location.reload();
+        }
+
+        function shutdownApp() {
+            if(confirm("Close the Dockd software?")) {
+                fetch('/shutdown', {method: 'POST'});
+                window.close();
+                document.body.innerHTML = "<h1 style='color:white; text-align:center; margin-top:20%'>SYSTEM OFF</h1>";
+                document.body.style.backgroundColor = "#333";
+            }
+        }
+
+        // ====== SHIP ORDERS - SCAN LOGIC ======
+        document.body.onclick = (e) => {
+            const selection = window.getSelection();
+            if (selection.toString().length > 0) return;
+            if (activePanel === 'ship' && currentUser && !e.target.closest('input') && !e.target.closest('button') && !e.target.closest('a')) {
+                document.getElementById('main-input').focus();
+            }
+        };
+
+        document.getElementById('main-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleScan(e.target.value.trim());
+                e.target.value = '';
+            }
+        });
+
+        const BLOCKING_MODALS = ['cancelled-modal', 'pickup-modal', 'amazon-carrier-modal', 'highvalue-modal', 'carrier-modal', 'change-carrier-modal', 'ob-modal', 'success-modal', 'choice-modal'];
+        function isModalBlocking() {
+            return BLOCKING_MODALS.some(id => {
+                const el = document.getElementById(id);
+                return el && el.style.display !== 'none' && el.style.display !== '';
+            });
+        }
+
+        function handleScan(val) {
+            if (!val) return;
+            if (isModalBlocking()) {
+                log("Scan blocked - modal requires attention.");
+                document.getElementById('main-input').value = '';
+                return;
+            }
+            val = val.trim();
+            log(`Scanned: ${val}`);
+
+            if (!currentOrderId) { fetchOrder(val); return; }
+
+            if (val.toLowerCase() === 'yoda') {
+                const overrideItems = itemsNeeded.filter(i => parseInt(i.scanned_qty) < parseInt(i.quantity))
+                    .map(i => ({item_name: i.item.refName, sku: i.sku}));
+                itemsNeeded.forEach(i => { i.scanned_qty = parseInt(i.quantity); });
+                renderItems();
+                checkCompletion();
+                log("OVERRIDE - All items auto-verified.");
+                if (overrideItems.length) {
+                    fetch('/log_override', {method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({order_number: currentOrderId, user: currentUser?.name || '', station: STATION_ID, override_type: 'full', items: overrideItems})});
+                }
+                return;
+            }
+
+            const isOB = val.toUpperCase() === 'OB';
+            const isBoxNum = (!isNaN(val) && parseInt(val) >= 1 && parseInt(val) <= 22);
+            const isSpecialBox = ['SMALLBUB', 'LARGEBUB', 'SMALLPAK', 'LARGEPAK'].includes(val);
+            const isFedExCode = val.startsWith("FDX") || val === 'FXENV' || val === 'FXPAK';
+
+            if (isOB) {
+                if (!checkCompletion()) { showError("Verify all items first!"); }
+                else { showOBModal(); }
+                return;
+            }
+
+            if (isBoxNum || isFedExCode || isSpecialBox) {
+                if (!checkCompletion()) {
+                    showError("Verify all items first!");
+                } else {
+                    if (isFedExMode && isBoxNum) { processBox(val); }
+                    else if (isFedExMode && isFedExCode) { processBox(val); }
+                    else if (!isFedExMode && isFedExCode) { showError("This is NOT a FedEx order. Please scan a standard box (1-22)."); }
+                    else { processBox(val); }
+                }
+                return;
+            }
+            verifyItem(val);
+        }
+
+        function fetchOrder(ticket, specificFulfillmentId = null) {
+            let url = `/get_order_details?ticket=${ticket}`;
+            if (specificFulfillmentId) url += `&selected_ff=${specificFulfillmentId}`;
+
+            fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('choice-modal').style.display = 'none';
+                    currentOrderId = ticket;
+                    currentFulfillmentId = data.fulfillment_id;
+                    itemsNeeded = data.items.map(i => ({...i, quantity: parseInt(i.quantity) || 1, verified: false, scanned_qty: 0}));
+                    document.getElementById('order-id-display').innerText = ticket;
+                    document.getElementById('cust-name').innerText = data.customer.entityId;
+                    document.getElementById('cust-phone').innerText = data.customer.phone || "No Phone";
+                    const addr = data.customer.addressBook;
+                    if (addr) {
+                        let fullAddr = "";
+                        if (addr.addr1) fullAddr = `${addr.addr1}, ${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
+                        else if (addr.addrText) fullAddr = addr.addrText.replace(/\r?\n|\r/g, ", ");
+                        else fullAddr = `${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
+                        document.getElementById('cust-addr').innerText = fullAddr;
+                    } else { document.getElementById('cust-addr').innerText = "Address not available"; }
+                    const shipMethod = (data.shipMethod || "Best Way").toString().trim();
+                    document.getElementById('ship-via').innerText = shipMethod;
+                    currentOrderTotal = parseFloat(data.orderTotal) || 0;
+                    document.getElementById('order-total-display').innerText = `$${currentOrderTotal.toFixed(2)}`;
+                    currentCaShippingPaid = parseFloat(data.caShippingPaid) || 0;
+                    document.getElementById('ca-shipping-paid').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
+                    orderLoadedAt = new Date().toISOString();
+                    currentFfCreatedAt = data.ffCreatedAt || '';
+                    currentAmazonOrderId = data.amazonOrderId || '';
+                    renderItems();
+                    amazonCarrierOverride = null;
+                    highValueCarrierOverride = null;
+                    manualCarrierOverride = null;
+                    const changeBtn = document.getElementById('btn-change-carrier');
+                    changeBtn.style.opacity = '1'; changeBtn.style.pointerEvents = 'auto';
+                    // Check for Amazon cancellation before proceeding
+                    fetch(`/check_cancellation?order_id=${encodeURIComponent(ticket)}&amazon_id=${encodeURIComponent(currentAmazonOrderId)}`)
+                    .then(r => r.json())
+                    .then(cancelData => {
+                        if (cancelData.status === 'cancelled') {
+                            document.getElementById('cancelled-amazon-id').innerText = cancelData.amazon_order_id || 'Unknown';
+                            document.getElementById('cancelled-at-display').innerText = cancelData.cancelled_at ? new Date(cancelData.cancelled_at).toLocaleString() : 'Unknown';
+                            document.getElementById('cancelled-modal').style.display = 'flex';
+                            log(`BLOCKED - Order ${ticket} is CANCELLED (Amazon: ${cancelData.amazon_order_id})`);
+                            return;
+                        }
+                        const sm = shipMethod.toLowerCase();
+                        if (sm.includes("pick up") || sm.includes("pickup") || sm.includes("will call")) showPickupModal();
+                        else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
+                        else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes("fedex") && !sm.includes("ups") && (sm.includes("usps") || sm.includes("ground advantage") || sm.includes("priority") || sm.includes("first class"))) {
+                            showHighValueModal(currentOrderTotal);
+                        }
+                        if (sm.includes("fedex")) { isFedExMode = true; activateFedExUI(); }
+                        else { isFedExMode = false; resetBoxUI(); }
+                        log("Order Loaded.");
+                    })
+                    .catch(() => {
+                        // Fail open - if cancellation check errors, proceed normally
+                        const sm = shipMethod.toLowerCase();
+                        if (sm.includes("pick up") || sm.includes("pickup") || sm.includes("will call")) showPickupModal();
+                        else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
+                        else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes("fedex") && !sm.includes("ups") && (sm.includes("usps") || sm.includes("ground advantage") || sm.includes("priority") || sm.includes("first class"))) {
+                            showHighValueModal(currentOrderTotal);
+                        }
+                        if (sm.includes("fedex")) { isFedExMode = true; activateFedExUI(); }
+                        else { isFedExMode = false; resetBoxUI(); }
+                        log("Order Loaded.");
+                    });
+                } else if (data.status === 'choice_needed') {
+                    showChoiceModal(ticket, data.options);
+                } else {
+                    showError(data.message);
+                }
+            });
+        }
+
+        function showChoiceModal(ticket, options) {
+            const list = document.getElementById('choice-list');
+            list.innerHTML = '';
+            options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'user-btn';
+                btn.style.padding = '15px'; btn.style.fontSize = '16px';
+                btn.innerText = opt.label;
+                btn.onclick = () => fetchOrder(ticket, opt.id);
+                list.appendChild(btn);
+            });
+            document.getElementById('choice-modal').style.display = 'flex';
+        }
+
+        function getTotalItems() { return itemsNeeded.reduce((acc, i) => acc + parseInt(i.quantity), 0); }
+        function getVerifiedCount() { return itemsNeeded.reduce((acc, i) => acc + parseInt(i.scanned_qty), 0); }
+
+        function checkCompletion() {
+            const current = getVerifiedCount();
+            const total = getTotalItems();
+            if (current >= total && total > 0) { unlockBoxUI(); return true; }
+            return false;
+        }
+
+        function manualOverride(index) {
+            const item = itemsNeeded[index];
+            if (!item) return;
+            item.scanned_qty = parseInt(item.quantity);
+            renderItems(); checkCompletion();
+            document.getElementById('main-input').focus();
+            log(`Manual Override: ${item.item.refName}`);
+            fetch('/log_override', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({order_number: currentOrderId, user: currentUser?.name || '', station: STATION_ID, override_type: 'single',
+                    items: [{item_name: item.item.refName, sku: item.sku}]})});
+        }
+
+        function verifyItem(scannedInput) {
+            if (!scannedInput) return;
+            const inputClean = scannedInput.trim();
+            let item = itemsNeeded.find(i => {
+                if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
+                if (i.sku === inputClean) return true;
+                if (i.item.refName === inputClean) return true;
+                if (i.valid_scans && i.valid_scans.filter(Boolean).includes(inputClean)) return true;
+                return false;
+            });
+            if (item) { item.scanned_qty++; renderItems(); checkCompletion(); }
+            else { showError("INVALID ITEM: " + inputClean); }
+        }
+
+        function renderItems() {
+            const list = document.getElementById('item-list');
+            list.innerHTML = '';
+            itemsNeeded.forEach((i, index) => {
+                const isComplete = parseInt(i.scanned_qty) >= parseInt(i.quantity);
+                const div = document.createElement('div');
+                div.className = `item-row ${isComplete ? 'completed' : ''}`;
+                const showOverride = overrideExceptions.has(i.sku) && !isComplete;
+                div.innerHTML = `
+                    <div style="flex-grow:1"><div class="sku">${i.item.refName}</div><div class="desc">${i.sku}</div></div>
+                    <div style="display:flex; align-items:center;">
+                        <div class="qty-badge">${i.scanned_qty} / ${i.quantity}</div>
+                        ${showOverride ? `<button class="manual-btn" onclick="manualOverride(${index})">&#10004;</button>` : ''}
+                    </div>`;
+                list.appendChild(div);
+            });
+        }
+
+        function processBox(boxId) {
+            if (isFedExMode) {
+                let friendly = boxId;
+                if(boxId === 'FDXENV' || boxId === 'FXENV') friendly = 'FEDEX ENVELOPE';
+                else if(boxId === 'FDXPAK' || boxId === 'FXPAK') friendly = 'FEDEX PAK';
+                else if(boxId.startsWith("FDX")) friendly = boxId.replace("FDX", "FEDEX ");
+                else friendly = `BOX ${boxId} (One Rate Calc)`;
+                document.getElementById('box-display').innerText = friendly;
+            } else {
+                document.getElementById('box-display').innerText = `${boxId}`;
+            }
+            document.getElementById('weight-val').innerText = "...";
+            log("Reading Scale...");
+            fetch('/get_scale_weight')
+            .then(r => r.json())
+            .then(scaleData => {
+                if (scaleData.status === 'success') {
+                    const finalWeight = scaleData.weight;
+                    document.getElementById('weight-val').innerText = finalWeight;
+                    document.getElementById('scale-section').classList.add('weight-captured');
+                    log(`Generating Label (${boxId} @ ${finalWeight} lbs)...`);
+                    pendingShipPayload = { fulfillment_id: currentFulfillmentId, box_id: boxId, weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, order_loaded_at: orderLoadedAt, ff_created_at: currentFfCreatedAt };
+                    if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
+                    else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
+                    else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
+                    doShipRequest(pendingShipPayload);
+                } else { showError("Scale Error: " + scaleData.message); }
+            });
+        }
+
+        function doShipRequest(payload) {
+            fetch('/ship_order', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(shipData => {
+                if (shipData.status === 'success') {
+                    lastShippedOrderId = currentOrderId;
+                    document.getElementById('btn-reprint-last').style.opacity = '1';
+                    document.getElementById('btn-reprint-last').style.pointerEvents = 'auto';
+                    let successMsg = `Tracking: ${shipData.tracking}`;
+                    if (shipData.carrier_switched) successMsg += ' (carrier switched)';
+                    document.getElementById('success-sub').innerText = successMsg;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    updateShipCount();
+                    setTimeout(() => { softReset(); }, 2500);
+                } else if (shipData.status === 'carrier_conflict') {
+                    pendingCarrierConflict = shipData;
+                    showCarrierModal(shipData);
+                } else {
+                    showError("Shipping Failed: " + shipData.message);
+                }
+            });
+        }
+
+        function buildCarrierWizard(conflict) {
+            const tips = [];
+            const suggested = conflict.suggested;
+            const current = conflict.current_carrier;
+            const isDimOverride = conflict.reason.includes('exceeds USPS size/weight');
+            const isRural = conflict.reason.includes('Rural surcharge');
+
+            if (suggested === 'UPS' && current === 'USPS') {
+                if (isDimOverride)
+                    tips.push('<strong>This package is too large/heavy for USPS.</strong> Switch to UPS.');
+                if (currentOrderTotal >= HIGH_VALUE_THRESHOLD)
+                    tips.push('Order is <strong>$' + currentOrderTotal.toFixed(2) + '</strong> - high-value orders should ship UPS for better tracking & insurance.');
+                if (!isDimOverride && currentOrderTotal < HIGH_VALUE_THRESHOLD)
+                    tips.push('This box size is cheaper to ship via UPS.');
+            }
+
+            if (suggested === 'USPS' && current === 'UPS') {
+                if (isRural)
+                    tips.push('This is a <strong>rural ZIP</strong> - UPS charges a $4-46 area surcharge. USPS has no surcharge.');
+                if (currentCaShippingPaid > 5)
+                    tips.push('Customer paid <strong>$' + currentCaShippingPaid.toFixed(2) + '</strong> for shipping - consider keeping UPS.');
+                else
+                    tips.push('Small package - USPS is significantly cheaper for this box.');
+                if (currentOrderTotal < HIGH_VALUE_THRESHOLD && currentCaShippingPaid <= 5)
+                    tips.push('Order value is under $' + HIGH_VALUE_THRESHOLD + ' and customer didn\'t pay for premium shipping - USPS is the right call.');
+            }
+
+            return tips.length ? tips.map(t => '<div style="padding: 3px 0;">&#x2022; ' + t + '</div>').join('') : '';
+        }
+
+        function showCarrierModal(conflict) {
+            document.getElementById('carrier-reason').innerText = conflict.reason;
+            document.getElementById('carrier-order-total').innerText = `$${currentOrderTotal.toFixed(2)}`;
+            document.getElementById('carrier-ca-shipping').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
+            const wizard = document.getElementById('carrier-wizard');
+            const wizardHtml = buildCarrierWizard(conflict);
+            if (wizardHtml) { wizard.innerHTML = wizardHtml; wizard.style.display = ''; }
+            else { wizard.style.display = 'none'; }
+            const btnSuggested = document.getElementById('btn-carrier-suggested');
+            const btnOriginal = document.getElementById('btn-carrier-original');
+            btnSuggested.innerText = `SHIP ${conflict.suggested}`;
+            btnSuggested.style.background = conflict.suggested === 'UPS' ? '#4a2400' : '#003087';
+            // USPS->UPS: mandatory switch, no "Keep" option
+            if (conflict.suggested === 'UPS') {
+                btnOriginal.style.display = 'none';
+            } else {
+                btnOriginal.style.display = '';
+                btnOriginal.innerText = `Keep ${conflict.current_carrier}`;
+            }
+            document.getElementById('carrier-modal').style.display = 'flex';
+            log(`Carrier suggestion: switch to ${conflict.suggested}`);
+        }
+
+        function shipWithCarrier(choice) {
+            document.getElementById('carrier-modal').style.display = 'none';
+            if (!pendingShipPayload) return;
+            if (choice === 'suggested') {
+                pendingShipPayload.carrier_override = pendingCarrierConflict.suggested;
+            } else {
+                pendingShipPayload.carrier_override = pendingCarrierConflict.current_carrier;
+            }
+            log(`Shipping with ${pendingShipPayload.carrier_override}...`);
+            doShipRequest(pendingShipPayload);
+        }
+
+        function showAmazonCarrierModal(methodName) {
+            document.getElementById('amazon-method-display').innerText = methodName;
+            document.getElementById('amazon-order-total').innerText = `$${currentOrderTotal.toFixed(2)}`;
+            document.getElementById('amazon-ca-shipping').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
+            document.getElementById('amazon-carrier-modal').style.display = 'flex';
+            log(`Amazon method detected: ${methodName} - awaiting carrier selection`);
+        }
+
+        function selectAmazonCarrier(carrier) {
+            amazonCarrierOverride = carrier;
+            document.getElementById('amazon-carrier-modal').style.display = 'none';
+            document.getElementById('ship-via').innerText += ` -> ${carrier}`;
+            log(`Amazon carrier selected: ${carrier}`);
+            document.getElementById('main-input').focus();
+        }
+
+        function showHighValueModal(total) {
+            document.getElementById('highvalue-total').innerText = `$${total.toFixed(2)}`;
+            document.getElementById('highvalue-ca-shipping').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
+            document.getElementById('highvalue-modal').style.display = 'flex';
+            log(`High value order ($${total.toFixed(2)}) on USPS - prompting carrier upgrade`);
+        }
+
+        function selectHighValueCarrier(carrier) {
+            document.getElementById('highvalue-modal').style.display = 'none';
+            if (carrier) {
+                highValueCarrierOverride = carrier;
+                const label = carrier === 'FEDEX_ONE_RATE_2DAY' ? 'FedEx 2Day' : 'UPS';
+                document.getElementById('ship-via').innerText += ` -> ${label}`;
+                if (carrier === 'FEDEX_ONE_RATE_2DAY') { isFedExMode = true; activateFedExUI(); }
+                log(`High value carrier selected: ${label}`);
+            } else {
+                highValueCarrierOverride = null;
+                log('Keeping USPS for high value order');
+            }
+            document.getElementById('main-input').focus();
+        }
+
+        function showOBModal() {
+            document.getElementById('ob-length').value = '';
+            document.getElementById('ob-width').value = '';
+            document.getElementById('ob-height').value = '';
+            document.getElementById('ob-modal').style.display = 'flex';
+            document.getElementById('ob-length').focus();
+        }
+
+        function cancelOB() {
+            document.getElementById('ob-modal').style.display = 'none';
+            if (activePanel === 'ship') document.getElementById('main-input').focus();
+        }
+
+        function confirmOB() {
+            const l = parseFloat(document.getElementById('ob-length').value);
+            const w = parseFloat(document.getElementById('ob-width').value);
+            const h = parseFloat(document.getElementById('ob-height').value);
+            if (!l || !w || !h || l <= 0 || w <= 0 || h <= 0) {
+                showError("Enter valid dimensions for all three fields.");
+                return;
+            }
+            document.getElementById('ob-modal').style.display = 'none';
+            document.getElementById('box-display').innerText = `OB (${l}x${w}x${h})`;
+            document.getElementById('weight-val').innerText = "...";
+            log(`Original Box: ${l} x ${w} x ${h} - Reading Scale...`);
+            fetch('/get_scale_weight')
+            .then(r => r.json())
+            .then(scaleData => {
+                if (scaleData.status === 'success') {
+                    const finalWeight = scaleData.weight;
+                    document.getElementById('weight-val').innerText = finalWeight;
+                    document.getElementById('scale-section').classList.add('weight-captured');
+                    log(`Generating Label (OB ${l}x${w}x${h} @ ${finalWeight} lbs)...`);
+                    pendingShipPayload = { fulfillment_id: currentFulfillmentId, box_id: 'OB', weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, ob_dims: {l: l, w: w, h: h} };
+                    if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
+                    else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
+                    else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
+                    doShipRequest(pendingShipPayload);
+                } else { showError("Scale Error: " + scaleData.message); }
+            });
+        }
+
+        // Allow Enter key to submit OB modal from any field
+        ['ob-length', 'ob-width', 'ob-height'].forEach(id => {
+            document.getElementById(id).addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') confirmOB();
+            });
+        });
+
+        function openChangeCarrierModal() {
+            if (!currentOrderId) { showError("Load an order first."); return; }
+            const currentShip = document.getElementById('ship-via').innerText;
+            document.getElementById('change-carrier-current').innerText = currentShip;
+            document.getElementById('change-order-total').innerText = `$${currentOrderTotal.toFixed(2)}`;
+            document.getElementById('change-ca-shipping').innerText = `$${currentCaShippingPaid.toFixed(2)}`;
+            document.getElementById('change-carrier-modal').style.display = 'flex';
+        }
+
+        function closeChangeCarrierModal() {
+            document.getElementById('change-carrier-modal').style.display = 'none';
+            if (activePanel === 'ship') document.getElementById('main-input').focus();
+        }
+
+        function applyManualCarrier(carrier) {
+            document.getElementById('change-carrier-modal').style.display = 'none';
+            manualCarrierOverride = carrier;
+            const label = carrier === 'FEDEX_ONE_RATE_2DAY' ? 'FedEx 2Day' : carrier;
+            document.getElementById('ship-via').innerText = document.getElementById('ship-via').innerText.split(' -> ')[0] + ` -> ${label}`;
+            if (carrier === 'FEDEX_ONE_RATE_2DAY') { isFedExMode = true; activateFedExUI(); }
+            else { isFedExMode = false; resetBoxUI(); if (checkCompletion()) unlockBoxUI(); }
+            log(`Manual carrier change: ${label}`);
+            document.getElementById('main-input').focus();
+        }
+
+        function softReset() {
+            document.getElementById('cancelled-modal').style.display = 'none';
+            document.getElementById('success-modal').style.display = 'none';
+            document.getElementById('pickup-modal').style.display = 'none';
+            document.getElementById('carrier-modal').style.display = 'none';
+            document.getElementById('amazon-carrier-modal').style.display = 'none';
+            document.getElementById('highvalue-modal').style.display = 'none';
+            document.getElementById('change-carrier-modal').style.display = 'none';
+            document.getElementById('ob-modal').style.display = 'none';
+            document.getElementById('link-modal').style.display = 'none';
+            document.getElementById('reprint-modal').style.display = 'none';
+            document.getElementById('void-modal').style.display = 'none';
+            currentOrderId = null; currentFulfillmentId = null; itemsNeeded = []; isFedExMode = false;
+            document.getElementById('order-id-display').innerText = "Waiting for scan...";
+            document.getElementById('cust-name').innerText = "Waiting for scan...";
+            document.getElementById('cust-phone').innerText = "Waiting for scan...";
+            document.getElementById('cust-addr').innerText = "Waiting for scan...";
+            document.getElementById('ship-via').innerText = "Waiting for scan...";
+            document.getElementById('order-total-display').innerText = "-";
+            document.getElementById('ca-shipping-paid').innerText = "-";
+            currentCaShippingPaid = 0;
+            currentOrderTotal = 0;
+            orderLoadedAt = null;
+            currentFfCreatedAt = '';
+            currentAmazonOrderId = '';
+            manualCarrierOverride = null;
+            const changeBtn = document.getElementById('btn-change-carrier');
+            changeBtn.style.opacity = '0.4'; changeBtn.style.pointerEvents = 'none';
+            document.getElementById('item-list').innerHTML = '<div style="padding:40px; text-align:center; color:#999; font-style:italic; grid-column: span 2;">Scan Order ID to begin</div>';
+            resetBoxUI();
+            document.getElementById('main-input').value = "";
+            document.getElementById('main-input').focus();
+            log("Ready for next order.");
+        }
+
+        function resetBoxUI() {
+            document.body.classList.remove('fedex-active');
+            const card = document.getElementById('box-card');
+            card.classList.remove('active');
+            document.getElementById('box-header-text').innerText = "Pending Items...";
+            document.getElementById('box-display').innerText = "WAITING";
+            document.getElementById('scale-section').classList.remove('weight-captured');
+            document.getElementById('scale-section').style.backgroundColor = "var(--brand-red)";
+        }
+
+        function activateFedExUI() { document.body.classList.add('fedex-active'); log("FEDEX MODE ACTIVATED"); }
+
+        function unlockBoxUI() {
+            document.getElementById('box-card').classList.add('active');
+            if (isFedExMode) {
+                document.getElementById('box-header-text').innerText = "FEDEX - SCAN BOX OR ENVELOPE";
+                document.getElementById('box-display').innerText = "SCAN BOX";
+                document.getElementById('scale-section').style.backgroundColor = "var(--fedex-purple)";
+            } else {
+                document.getElementById('box-header-text').innerText = "SCAN BOX NOW";
+                document.getElementById('box-display').innerText = "SCAN BOX";
+                document.getElementById('scale-section').style.backgroundColor = "var(--success-green)";
+            }
+        }
+
+        function showError(msg) { document.getElementById('error-msg').innerText = msg; document.getElementById('error-modal').style.display = 'flex'; }
+        function closeErrorModal() { document.getElementById('error-modal').style.display = 'none'; if (activePanel === 'ship') document.getElementById('main-input').focus(); }
+        function confirmCancelled() { document.getElementById('cancelled-modal').style.display = 'none'; softReset(); log("Cancelled order cleared - ready for next scan."); }
+        function log(msg) { const d = document.createElement('div'); d.className = 'log-entry'; d.innerText = `> ${msg}`; document.getElementById('status-log').prepend(d); }
+
+        function showPickupModal() { document.getElementById('pickup-modal').style.display = 'flex'; }
+        function confirmPickup() { document.getElementById('pickup-modal').style.display = 'none'; softReset(); }
+
+        // ====== LINK MODAL ======
+        function openLinkModal() {
+            linkStep = 'order'; linkOrderId = null; linkItemsNeeded = []; linkPendingOrderTicket = null;
+            document.getElementById('link-modal').style.display = 'flex';
+            document.getElementById('link-step-order').style.display = 'block';
+            document.getElementById('link-step-verify').style.display = 'none';
+            document.getElementById('link-step-tracking').style.display = 'none';
+            document.getElementById('link-choice-box').style.display = 'none';
+            document.getElementById('link-scan-input').value = '';
+            document.getElementById('link-verify-input').value = '';
+            document.getElementById('link-track-input').value = '';
+            document.getElementById('link-scan-input').focus();
+        }
+        function closeLinkModal() { document.getElementById('link-modal').style.display = 'none'; if (activePanel === 'ship') document.getElementById('main-input').focus(); }
+
+        function linkFetchOrder(ticket, selectedFfId) {
+            let url = `/get_order_details?ticket=${encodeURIComponent(ticket)}`;
+            if (selectedFfId) url += `&selected_ff=${selectedFfId}`;
+            fetch(url).then(r => r.json()).then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('link-choice-box').style.display = 'none';
+                    linkOrderId = ticket;
+                    linkItemsNeeded = data.items.map(i => ({...i, quantity: parseInt(i.quantity) || 1, scanned_qty: 0}));
+                    document.getElementById('link-order-display').innerText = ticket;
+                    document.getElementById('link-order-display2').innerText = ticket;
+                    linkStep = 'verify';
+                    document.getElementById('link-step-order').style.display = 'none';
+                    document.getElementById('link-step-verify').style.display = 'flex';
+                    document.getElementById('link-step-tracking').style.display = 'none';
+                    renderLinkItems();
+                    document.getElementById('link-verify-input').value = '';
+                    document.getElementById('link-verify-input').focus();
+                } else if (data.status === 'choice_needed') {
+                    linkPendingOrderTicket = ticket;
+                    const list = document.getElementById('link-choice-list');
+                    list.innerHTML = '';
+                    data.options.forEach(opt => {
+                        const btn = document.createElement('button');
+                        btn.className = 'user-btn'; btn.style.padding = '12px'; btn.innerText = opt.label;
+                        btn.onclick = () => linkFetchOrder(ticket, opt.id);
+                        list.appendChild(btn);
+                    });
+                    document.getElementById('link-choice-box').style.display = 'block';
+                } else { alert('Error: ' + (data.message || 'Could not load order')); }
+            });
+        }
+
+        function linkManualOverride(index) {
+            const item = linkItemsNeeded[index];
+            if (!item) return;
+            item.scanned_qty = parseInt(item.quantity);
+            renderLinkItems();
+            fetch('/log_override', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({order_number: currentOrderId, user: currentUser?.name || '', station: STATION_ID, override_type: 'single',
+                    items: [{item_name: item.item.refName, sku: item.sku}]})});
+            if (getLinkVerifiedCount() >= getLinkTotalCount()) {
+                linkStep = 'tracking';
+                document.getElementById('link-step-verify').style.display = 'none';
+                document.getElementById('link-step-tracking').style.display = 'block';
+                document.getElementById('link-track-input').value = '';
+                document.getElementById('link-track-input').focus();
+            } else { document.getElementById('link-verify-input').focus(); }
+        }
+
+        function renderLinkItems() {
+            const list = document.getElementById('link-item-list');
+            list.innerHTML = '';
+            linkItemsNeeded.forEach((i, index) => {
+                const isComplete = parseInt(i.scanned_qty) >= parseInt(i.quantity);
+                const div = document.createElement('div');
+                div.className = 'item-row' + (isComplete ? ' completed' : '');
+                div.style.cssText = 'padding:10px; border:1px solid #e0e0e0; border-radius:6px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; background:white;';
+                const qtyBadgeStyle = isComplete ? 'background:var(--brand-red); color:white;' : 'background:#ddd; color:#555;';
+                const linkShowOverride = !isComplete && overrideExceptions.has(i.sku);
+                const overrideBtn = linkShowOverride ? `<button type="button" class="manual-btn" onclick="linkManualOverride(${index})" style="width:40px;height:40px;border-radius:50%;border:none;background:#e0e0e0;color:#555;cursor:pointer;font-size:18px;margin-left:10px;flex-shrink:0;" title="Mark verified">&#10004;</button>` : '';
+                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
+                list.appendChild(div);
+            });
+        }
+
+        function getLinkVerifiedCount() { return linkItemsNeeded.reduce((acc, i) => acc + parseInt(i.scanned_qty), 0); }
+        function getLinkTotalCount() { return linkItemsNeeded.reduce((acc, i) => acc + parseInt(i.quantity), 0); }
+
+        function verifyLinkItem(scannedInput) {
+            const inputClean = scannedInput.trim();
+            let item = linkItemsNeeded.find(i => {
+                if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
+                if (i.sku === inputClean) return true;
+                if (i.item.refName === inputClean) return true;
+                if (i.valid_scans && i.valid_scans.filter(Boolean).includes(inputClean)) return true;
+                return false;
+            });
+            if (item) {
+                item.scanned_qty++;
+                renderLinkItems();
+                if (getLinkVerifiedCount() >= getLinkTotalCount()) {
+                    linkStep = 'tracking';
+                    document.getElementById('link-step-verify').style.display = 'none';
+                    document.getElementById('link-step-tracking').style.display = 'block';
+                    document.getElementById('link-track-input').value = '';
+                    document.getElementById('link-track-input').focus();
+                } else { document.getElementById('link-verify-input').value = ''; document.getElementById('link-verify-input').focus(); }
+            } else { alert('INVALID ITEM: ' + inputClean); document.getElementById('link-verify-input').focus(); }
+        }
+
+        document.getElementById('link-scan-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') { const val = this.value.trim(); if (val) { linkFetchOrder(val); this.value = ''; } }
+        });
+        document.getElementById('link-verify-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') { const val = this.value.trim(); if (val) { verifyLinkItem(val); } }
+        });
+        document.getElementById('link-track-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && this.value.trim() !== '') submitLink();
+        });
+
+        function cleanTrackingScan(scan) {
+            let s = scan.toUpperCase().trim();
+            if (s.indexOf('1Z') > -1) return s.substring(s.indexOf('1Z'));
+            if (s.indexOf('9343') > -1) return s.substring(s.indexOf('9343'));
+            if (s.indexOf('9400') > -1) return s.substring(s.indexOf('9400'));
+            return s;
+        }
+
+        function submitLink() {
+            const ticket = linkOrderId;
+            let tracking = document.getElementById('link-track-input').value.trim();
+            if (!ticket || !tracking) { alert('Scan tracking number to complete.'); return; }
+            tracking = cleanTrackingScan(tracking);
+            const btn = document.getElementById('btn-link-submit');
+            const originalText = btn.innerText;
+            btn.innerText = 'UPDATING...'; btn.disabled = true;
+            fetch('/manual_link_tracking', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket, tracking: tracking }) })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    closeLinkModal();
+                    document.getElementById('success-sub').innerText = `Linked ${ticket} to ${tracking}`;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    setTimeout(() => { document.getElementById('success-modal').style.display = 'none'; }, 2000);
+                    log(`Merged Order ${ticket}`);
+                } else { alert('Error: ' + data.message); }
+            })
+            .catch(err => alert('Network Error'))
+            .finally(() => { btn.innerText = originalText; btn.disabled = false; });
+        }
+
+        // ====== REPRINT & VOID ======
+        function openReprintModal() { document.getElementById('reprint-modal').style.display = 'flex'; document.getElementById('reprint-order-input').value = ""; document.getElementById('reprint-order-input').focus(); }
+        function closeReprintModal() { document.getElementById('reprint-modal').style.display = 'none'; if (activePanel === 'ship') document.getElementById('main-input').focus(); }
+        document.getElementById('reprint-order-input').addEventListener('keypress', function(e) { if (e.key === 'Enter' && this.value.trim() !== "") submitReprint(); });
+        function submitReprint() {
+            const ticket = document.getElementById('reprint-order-input').value.trim();
+            if (!ticket) return;
+            const btn = document.getElementById('btn-reprint-submit');
+            const originalText = btn.innerText;
+            btn.innerText = "PRINTING..."; btn.disabled = true;
+            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket, station: STATION_ID }) })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('reprint-modal').style.display = 'none';
+                    document.getElementById('success-sub').innerText = `Reprinted Label for ${ticket}`;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    setTimeout(() => { document.getElementById('success-modal').style.display = 'none'; }, 2000);
+                    log(`Reprinted ${ticket}`);
+                } else { alert("Error: " + data.message); }
+            })
+            .catch(err => alert("Network Error"))
+            .finally(() => { btn.innerText = originalText; btn.disabled = false; });
+        }
+
+        function reprintLast() {
+            if (!lastShippedOrderId) return;
+            const btn = document.getElementById('btn-reprint-last');
+            btn.innerText = 'PRINTING...'; btn.style.pointerEvents = 'none';
+            fetch('/reprint_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: lastShippedOrderId, station: STATION_ID }) })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('success-sub').innerText = `Reprinted Last: ${lastShippedOrderId}`;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    setTimeout(() => { document.getElementById('success-modal').style.display = 'none'; }, 2000);
+                    log(`Reprinted last: ${lastShippedOrderId}`);
+                } else { showError("Reprint Failed: " + data.message); }
+            })
+            .catch(() => showError("Network Error"))
+            .finally(() => { btn.innerText = 'REPRINT LAST'; btn.style.pointerEvents = 'auto'; });
+        }
+
+        function openVoidModal() { document.getElementById('void-modal').style.display = 'flex'; document.getElementById('void-order-input').value = ""; document.getElementById('void-order-input').focus(); }
+        function closeVoidModal() { document.getElementById('void-modal').style.display = 'none'; if (activePanel === 'ship') document.getElementById('main-input').focus(); }
+        document.getElementById('void-order-input').addEventListener('keypress', function(e) { if (e.key === 'Enter' && this.value.trim() !== "") submitVoid(); });
+        function submitVoid() {
+            const ticket = document.getElementById('void-order-input').value.trim();
+            if (!ticket) return;
+            const btn = document.getElementById('btn-void-submit');
+            const originalText = btn.innerText;
+            btn.innerText = "VOIDING..."; btn.disabled = true;
+            fetch('/void_label', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ ticket: ticket }) })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    document.getElementById('void-modal').style.display = 'none';
+                    document.getElementById('success-sub').innerText = `Voided Label for ${ticket}`;
+                    document.getElementById('success-modal').style.display = 'flex';
+                    setTimeout(() => { document.getElementById('success-modal').style.display = 'none'; }, 2000);
+                    log(`Voided ${ticket}`);
+                } else { alert("Error: " + data.message); }
+            })
+            .catch(err => alert("Network Error"))
+            .finally(() => { btn.innerText = originalText; btn.disabled = false; });
+        }
+
+        // ====== KEYBOARD SHORTCUTS ======
+        document.addEventListener('keydown', function(event) {
+            if (event.key === "Escape") {
+                if (activePanel === 'ship') softReset();
+            }
+        });
+    </script>
+</body>
+</html>

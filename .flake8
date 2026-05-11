@@ -1,0 +1,4 @@
+[flake8]
+max-complexity = 35
+max-line-length = 120
+exclude = __pycache__, .git, build, dist

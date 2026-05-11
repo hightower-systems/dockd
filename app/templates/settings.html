@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dockd Settings</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --brand-red: #8e2716;
+            --cream: #fdf4e3;
+            --card-tan: #f7f3ec;
+            --card-border: #e0d9cc;
+            --text: #1a1a1a;
+            --text-muted: #999080;
+            --success: #16a34a;
+            --error: #dc2626;
+            --border: rgba(142, 39, 22, 0.18);
+            --radius: 6px;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--cream);
+            color: var(--text);
+            margin: 0;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+        header {
+            background: var(--brand-red);
+            color: white;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+        header .right { display: flex; gap: 12px; align-items: center; }
+        header .who { opacity: 0.85; font-size: 14px; }
+        header a.back-btn {
+            background: rgba(255,255,255,0.18); color: white; padding: 8px 14px;
+            border-radius: var(--radius); text-decoration: none; font-weight: 600; font-size: 14px;
+        }
+        header a.back-btn:hover { background: rgba(255,255,255,0.28); }
+        nav.tabs {
+            display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap;
+            background: var(--cream); border-bottom: 1px solid var(--card-border);
+        }
+        nav.tabs button {
+            background: transparent; border: 1px solid transparent; padding: 8px 14px;
+            font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+            border-radius: var(--radius) var(--radius) 0 0; color: var(--text-muted);
+        }
+        nav.tabs button.active {
+            background: var(--card-tan); color: var(--brand-red);
+            border: 1px solid var(--card-border); border-bottom-color: var(--card-tan);
+            margin-bottom: -1px;
+        }
+        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+        .card {
+            background: var(--card-tan); border: 1px solid var(--card-border);
+            border-radius: var(--radius); padding: 18px 22px; margin-bottom: 20px;
+        }
+        .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--brand-red); letter-spacing: 1px; text-transform: uppercase; }
+        .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+        .field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+        .field label { font-size: 12px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+        .field input, .field select {
+            font-family: inherit; font-size: 14px; padding: 8px 10px;
+            border: 1px solid var(--card-border); border-radius: var(--radius); background: white;
+        }
+        .field input:focus, .field select:focus { outline: 2px solid var(--brand-red); outline-offset: -1px; }
+        button.primary {
+            background: var(--brand-red); color: white; border: none; padding: 10px 18px;
+            border-radius: var(--radius); font-weight: 700; font-size: 14px; cursor: pointer;
+        }
+        button.primary:hover { background: #a83020; }
+        button.secondary {
+            background: white; border: 1px solid var(--card-border); padding: 8px 12px;
+            border-radius: var(--radius); font-weight: 600; font-size: 13px; cursor: pointer;
+        }
+        button.danger { background: var(--error); color: white; border: none; padding: 6px 10px; border-radius: var(--radius); font-size: 12px; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--card-border); font-size: 13px; }
+        th { background: rgba(0,0,0,0.04); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+        td input, td select { width: 100%; padding: 5px 6px; font-size: 13px; border: 1px solid var(--card-border); border-radius: 4px; background: white; }
+        .status-bar {
+            position: fixed; bottom: 20px; right: 20px; padding: 12px 18px;
+            background: var(--success); color: white; border-radius: var(--radius);
+            font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+            opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+        }
+        .status-bar.show { opacity: 1; }
+        .status-bar.error { background: var(--error); }
+        .pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+        .pill.admin { background: var(--brand-red); color: white; }
+        .pill.user { background: var(--text-muted); color: white; }
+        textarea {
+            font-family: inherit; font-size: 13px; padding: 8px; min-height: 60px;
+            border: 1px solid var(--card-border); border-radius: var(--radius); background: white; width: 100%;
+        }
+        .help { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .secret-row input { font-family: monospace; }
+        .secret-status { font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+        .secret-status.set { background: var(--success); color: white; }
+        .secret-status.unset { background: var(--text-muted); color: white; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>DOCKD :: SETTINGS</h1>
+        <div class="right">
+            <span class="who">Signed in as <strong>{{ current_user.name }}</strong> (admin)</span>
+            <a class="back-btn" href="/">&larr; Back to shipping</a>
+        </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+        <button class="active" data-pane="boxes">Boxes</button>
+        <button data-pane="carrier">Carrier rules</button>
+        <button data-pane="stations">Stations</button>
+        <button data-pane="origin">Shipper origin</button>
+        <button data-pane="shiprush">ShipRush</button>
+        <button data-pane="amazon">Amazon methods</button>
+        <button data-pane="overrides">Override SKUs</button>
+        <button data-pane="users">Users</button>
+        <button data-pane="secrets">Secrets (.env)</button>
+    </nav>
+
+    <main>
+        <!-- BOXES -->
+        <section id="pane-boxes" class="tab-pane active">
+            <div class="card">
+                <h2>Warehouse boxes</h2>
+                <p class="help">Scannable box codes used at the pack station. Preference: USPS, UPS, or WEIGHT_THRESHOLD (USPS under 3 lb, UPS over).</p>
+                <table id="boxes-table">
+                    <thead><tr>
+                        <th>ID</th><th>Label</th><th>L</th><th>W</th><th>H</th><th>Preference</th><th></th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addBoxRow()">+ Add box</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2>FedEx One Rate boxes</h2>
+                <p class="help">FedEx-supplied flat-rate boxes. <strong>Type</strong> is the ShipRush packaging code.</p>
+                <table id="fedex-table">
+                    <thead><tr>
+                        <th>ID</th><th>Label</th><th>L</th><th>W</th><th>H</th><th>Type</th><th></th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addFedexRow()">+ Add FedEx box</button>
+                </div>
+                <div class="row">
+                    <div class="field" style="flex: 1; min-width: 300px;">
+                        <label>FedEx One Rate fit order (comma-separated IDs, smallest first)</label>
+                        <input id="fedex-order" type="text" />
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveBoxes()">Save box settings</button>
+            </div>
+        </section>
+
+        <!-- CARRIER RULES -->
+        <section id="pane-carrier" class="tab-pane">
+            <div class="card">
+                <h2>High-value rule</h2>
+                <p class="help">Operator gets a carrier-upgrade prompt when an order's total meets or exceeds this amount on USPS shipments.</p>
+                <div class="row">
+                    <div class="field">
+                        <label>High-value threshold ($)</label>
+                        <input id="high-value-threshold" type="number" step="1" min="0" />
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Optimization thresholds</h2>
+                <div class="row">
+                    <div class="field"><label>Weight crossover (lb)</label><input id="rule-weight-crossover" type="number" step="0.1" /></div>
+                    <div class="field"><label>Dim-weight warn</label><input id="rule-dim-warn" type="number" step="0.1" /></div>
+                    <div class="field"><label>Dim-weight override</label><input id="rule-dim-override" type="number" step="0.1" /></div>
+                    <div class="field"><label>Longest side max (in)</label><input id="rule-longest-side" type="number" step="0.1" /></div>
+                    <div class="field"><label>Max weight USPS (lb)</label><input id="rule-max-weight-usps" type="number" step="0.1" /></div>
+                    <div class="field"><label>Rural shipping max ($)</label><input id="rule-rural-ca" type="number" step="0.1" /></div>
+                    <div class="field"><label>UPS&rarr;USPS shipping min ($)</label><input id="rule-usps-up-ca" type="number" step="0.1" /></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Carrier reason text</h2>
+                <p class="help">User-facing copy shown when a carrier conflict is detected. <code>{tier}</code> in RURAL_DAS is replaced at runtime.</p>
+                <div id="reasons-fields"></div>
+            </div>
+            <div class="card">
+                <h2>Label cache lifetime</h2>
+                <div class="row">
+                    <div class="field"><label>Hours</label><input id="label-max-age" type="number" min="1" step="1" /></div>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveCarrier()">Save carrier settings</button>
+            </div>
+        </section>
+
+        <!-- STATIONS -->
+        <section id="pane-stations" class="tab-pane">
+            <div class="card">
+                <h2>Pack stations</h2>
+                <p class="help">Each station has a host the scale agent listens on. <strong>Local</strong> means the dockd container reaches the printer directly (currently station 2); all others use HTTP to the per-laptop agent.</p>
+                <table id="stations-table">
+                    <thead><tr>
+                        <th>ID</th><th>Label</th><th>Host</th><th>Port</th><th>Local</th><th></th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addStationRow()">+ Add station</button>
+                </div>
+                <div class="row">
+                    <div class="field"><label>Default station ID</label><input id="default-station" type="text" /></div>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveStations()">Save stations</button>
+            </div>
+        </section>
+
+        <!-- SHIPPER ORIGIN -->
+        <section id="pane-origin" class="tab-pane">
+            <div class="card">
+                <h2>Shipper origin</h2>
+                <p class="help">Embedded into every ShipRush label as the return address.</p>
+                <div class="row">
+                    <div class="field" style="flex: 1; min-width: 200px;"><label>Company</label><input id="origin-company" type="text" /></div>
+                    <div class="field" style="flex: 1; min-width: 200px;"><label>Phone</label><input id="origin-phone" type="text" /></div>
+                </div>
+                <div class="row">
+                    <div class="field" style="flex: 1; min-width: 200px;"><label>Address line 1</label><input id="origin-addr1" type="text" /></div>
+                    <div class="field" style="min-width: 140px;"><label>Address line 2</label><input id="origin-addr2" type="text" /></div>
+                </div>
+                <div class="row">
+                    <div class="field"><label>City</label><input id="origin-city" type="text" /></div>
+                    <div class="field" style="width: 80px;"><label>State</label><input id="origin-state" type="text" /></div>
+                    <div class="field" style="width: 120px;"><label>Postal code</label><input id="origin-postal" type="text" /></div>
+                    <div class="field" style="width: 80px;"><label>Country</label><input id="origin-country" type="text" /></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Fallback customer phone</h2>
+                <p class="help">Used when the order does not include a delivery phone.</p>
+                <div class="row">
+                    <div class="field"><label>Phone</label><input id="fallback-phone" type="text" /></div>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveOrigin()">Save origin</button>
+            </div>
+        </section>
+
+        <!-- SHIPRUSH -->
+        <section id="pane-shiprush" class="tab-pane">
+            <div class="card">
+                <h2>ShipRush accounts</h2>
+                <p class="help">Account GUIDs assigned by ShipRush. Edit values, then save.</p>
+                <table id="accounts-table">
+                    <thead><tr><th>Slot</th><th>GUID</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addAccountRow()">+ Add slot</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2>ShipRush services</h2>
+                <p class="help">Service definitions matched by ship-method substrings (or by operator carrier override). Slot names like <code>UPS_GROUND</code> and <code>USPS_PRIORITY</code> are matched in code; rename only if you also adjust the matching logic.</p>
+                <table id="services-table">
+                    <thead><tr>
+                        <th>Slot</th><th>Carrier ID</th><th>Account key</th><th>Service code</th><th>One rate</th><th></th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addServiceRow()">+ Add service slot</button>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Carrier method IDs</h2>
+                <p class="help">Outbound IDs used when overriding an order's ship method. (Originally NetSuite-specific; will adapt to Sentry shape later.)</p>
+                <table id="methods-table">
+                    <thead><tr><th>Slot</th><th>ID</th><th>Ref name</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <div class="row" style="margin-top: 12px;">
+                    <button class="secondary" onclick="addMethodRow()">+ Add method</button>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveShipRush()">Save ShipRush settings</button>
+            </div>
+        </section>
+
+        <!-- AMAZON METHODS -->
+        <section id="pane-amazon" class="tab-pane">
+            <div class="card">
+                <h2>Amazon ship methods</h2>
+                <p class="help">Lowercase ship-method strings that trigger the operator's "Amazon picked your carrier" modal. One per line.</p>
+                <textarea id="amazon-methods" rows="8"></textarea>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveAmazon()">Save Amazon methods</button>
+            </div>
+        </section>
+
+        <!-- OVERRIDE SKUS -->
+        <section id="pane-overrides" class="tab-pane">
+            <div class="card">
+                <h2>Override exception SKUs</h2>
+                <p class="help">SKUs operators may manually scan-override (items with no usable barcode). One per line.</p>
+                <div class="row" style="align-items:center;">
+                    <input type="file" id="override-csv-file" accept=".csv,text/csv" style="display:none;">
+                    <button class="secondary" onclick="document.getElementById('override-csv-file').click()">Import CSV...</button>
+                    <div class="field" style="min-width:160px;">
+                        <label>Import mode</label>
+                        <select id="override-csv-mode">
+                            <option value="replace">Replace list</option>
+                            <option value="append">Append to list</option>
+                        </select>
+                    </div>
+                    <span id="override-csv-status" class="help" style="margin-bottom:8px;"></span>
+                </div>
+                <p class="help" style="margin-top:0;">CSV format: one column. A header row of <code>SKU</code> is auto-detected and skipped. The preview lands in the textarea so you can review before clicking save.</p>
+                <textarea id="override-skus" rows="10"></textarea>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveOverrides()">Save override SKUs</button>
+            </div>
+        </section>
+
+        <!-- USERS -->
+        <section id="pane-users" class="tab-pane">
+            <div class="card">
+                <h2>Users</h2>
+                <p class="help">Admin can do everything (including settings); user can ship only. Credentials are local to dockd.</p>
+                <table id="users-table">
+                    <thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="card">
+                <h2>Add user</h2>
+                <div class="row">
+                    <div class="field"><label>Username</label><input id="new-username" type="text" /></div>
+                    <div class="field"><label>Password</label><input id="new-password" type="password" /></div>
+                    <div class="field"><label>Role</label>
+                        <select id="new-role"><option value="user">user</option><option value="admin">admin</option></select>
+                    </div>
+                    <button class="primary" onclick="addUser()">Add user</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECRETS -->
+        <section id="pane-secrets" class="tab-pane">
+            <div class="card">
+                <h2>Secrets (.env)</h2>
+                <p class="help">Writes update <code>.env</code> and live <code>os.environ</code>; ShipRush/Sentry clients read the new values on the next request. Leave a field blank to keep its current value.</p>
+                <div id="secrets-fields"></div>
+                <div class="row">
+                    <button class="primary" onclick="saveSecrets()">Save secrets</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="status-bar" class="status-bar"></div>
+
+    <script>
+        const SECRET_KEYS = ['SHIPRUSH_TOKEN', 'SHIPRUSH_ENDPOINT', 'SECRET_KEY', 'SENTRY_BASE_URL', 'BACKEND'];
+        const REASON_KEYS = ['USPS_BOX', 'UPS_BOX', 'WEIGHT_USPS', 'WEIGHT_UPS', 'OB_USPS', 'OB_UPS', 'DIM_OVERRIDE', 'RURAL_DAS'];
+
+        let settings = null;
+
+        // -------- helpers --------
+        function showStatus(msg, isError) {
+            const bar = document.getElementById('status-bar');
+            bar.textContent = msg;
+            bar.classList.remove('error');
+            if (isError) bar.classList.add('error');
+            bar.classList.add('show');
+            setTimeout(() => bar.classList.remove('show'), 2200);
+        }
+        async function getJSON(url) {
+            const r = await fetch(url, { credentials: 'same-origin' });
+            if (!r.ok) throw new Error(`${url}: ${r.status}`);
+            return r.json();
+        }
+        async function patchSettings(partial) {
+            const r = await fetch('/api/settings', {
+                method: 'PATCH',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(partial),
+            });
+            if (!r.ok) throw new Error(`patch failed: ${r.status}`);
+            return r.json();
+        }
+        function el(tag, attrs, ...kids) {
+            const e = document.createElement(tag);
+            for (const k in attrs) {
+                if (k === 'class') e.className = attrs[k];
+                else if (k.startsWith('on')) e.addEventListener(k.slice(2), attrs[k]);
+                else if (k === 'value') e.value = attrs[k];
+                else e.setAttribute(k, attrs[k]);
+            }
+            for (const kid of kids) e.append(kid);
+            return e;
+        }
+
+        // -------- tabs --------
+        document.getElementById('tabs').addEventListener('click', (ev) => {
+            const btn = ev.target.closest('button');
+            if (!btn) return;
+            document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('pane-' + btn.dataset.pane).classList.add('active');
+        });
+
+        // -------- boxes --------
+        function renderBoxes() {
+            const tbody = document.querySelector('#boxes-table tbody');
+            tbody.innerHTML = '';
+            (settings.boxes || []).forEach((b, i) => tbody.append(renderBoxRow(b, i)));
+        }
+        function renderBoxRow(b, i) {
+            const prefs = ['USPS', 'UPS', 'WEIGHT_THRESHOLD'];
+            const tr = el('tr');
+            tr.append(
+                el('td', {}, el('input', { type: 'text', value: b.id, 'data-i': i, 'data-k': 'id' })),
+                el('td', {}, el('input', { type: 'text', value: b.label || '', 'data-i': i, 'data-k': 'label' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.l, 'data-i': i, 'data-k': 'l' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.w, 'data-i': i, 'data-k': 'w' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.h, 'data-i': i, 'data-k': 'h' })),
+                el('td', {}, (() => {
+                    const sel = el('select', { 'data-i': i, 'data-k': 'preference' });
+                    prefs.forEach(p => sel.append(el('option', { value: p }, p)));
+                    sel.value = b.preference || 'USPS';
+                    return sel;
+                })()),
+                el('td', {}, el('button', { class: 'danger', onclick: () => { settings.boxes.splice(i, 1); renderBoxes(); } }, 'remove')),
+            );
+            return tr;
+        }
+        function readBoxesTable() {
+            document.querySelectorAll('#boxes-table tbody input, #boxes-table tbody select').forEach(inp => {
+                const i = +inp.dataset.i, k = inp.dataset.k;
+                let v = inp.value;
+                if (k === 'l' || k === 'w' || k === 'h') v = parseFloat(v) || 0;
+                settings.boxes[i][k] = v;
+            });
+        }
+        function addBoxRow() {
+            settings.boxes.push({ id: '', label: '', l: 0, w: 0, h: 0, preference: 'USPS' });
+            renderBoxes();
+        }
+
+        function renderFedex() {
+            const tbody = document.querySelector('#fedex-table tbody');
+            tbody.innerHTML = '';
+            (settings.fedex_boxes || []).forEach((b, i) => tbody.append(renderFedexRow(b, i)));
+            document.getElementById('fedex-order').value = (settings.fedex_one_rate_order || []).join(', ');
+        }
+        function renderFedexRow(b, i) {
+            const tr = el('tr');
+            tr.append(
+                el('td', {}, el('input', { type: 'text', value: b.id, 'data-i': i, 'data-k': 'id', 'data-tbl': 'fedex' })),
+                el('td', {}, el('input', { type: 'text', value: b.label || '', 'data-i': i, 'data-k': 'label', 'data-tbl': 'fedex' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.l, 'data-i': i, 'data-k': 'l', 'data-tbl': 'fedex' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.w, 'data-i': i, 'data-k': 'w', 'data-tbl': 'fedex' })),
+                el('td', {}, el('input', { type: 'number', step: '0.1', value: b.h, 'data-i': i, 'data-k': 'h', 'data-tbl': 'fedex' })),
+                el('td', {}, el('input', { type: 'text', value: b.type || '', 'data-i': i, 'data-k': 'type', 'data-tbl': 'fedex' })),
+                el('td', {}, el('button', { class: 'danger', onclick: () => { settings.fedex_boxes.splice(i, 1); renderFedex(); } }, 'remove')),
+            );
+            return tr;
+        }
+        function readFedexTable() {
+            document.querySelectorAll('#fedex-table tbody input').forEach(inp => {
+                const i = +inp.dataset.i, k = inp.dataset.k;
+                let v = inp.value;
+                if (k === 'l' || k === 'w' || k === 'h') v = parseFloat(v) || 0;
+                settings.fedex_boxes[i][k] = v;
+            });
+            settings.fedex_one_rate_order = document.getElementById('fedex-order').value
+                .split(',').map(s => s.trim()).filter(Boolean);
+        }
+        function addFedexRow() {
+            settings.fedex_boxes.push({ id: '', label: '', l: 0, w: 0, h: 0, type: '' });
+            renderFedex();
+        }
+
+        async function saveBoxes() {
+            try {
+                readBoxesTable(); readFedexTable();
+                await patchSettings({
+                    boxes: settings.boxes,
+                    fedex_boxes: settings.fedex_boxes,
+                    fedex_one_rate_order: settings.fedex_one_rate_order,
+                });
+                showStatus('Box settings saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- carrier rules --------
+        function renderCarrier() {
+            document.getElementById('high-value-threshold').value = settings.high_value_threshold || 0;
+            document.getElementById('label-max-age').value = settings.label_max_age_hours || 8;
+            const r = settings.carrier_rules || {};
+            document.getElementById('rule-weight-crossover').value = r.weight_crossover_lb;
+            document.getElementById('rule-dim-warn').value = r.dim_weight_warn;
+            document.getElementById('rule-dim-override').value = r.dim_weight_override;
+            document.getElementById('rule-longest-side').value = r.longest_side_max_in;
+            document.getElementById('rule-max-weight-usps').value = r.max_weight_usps_lb;
+            document.getElementById('rule-rural-ca').value = r.rural_ca_shipping_max;
+            document.getElementById('rule-usps-up-ca').value = r.usps_to_ups_ca_shipping_min;
+
+            const reasons = settings.carrier_reasons || {};
+            const container = document.getElementById('reasons-fields');
+            container.innerHTML = '';
+            REASON_KEYS.forEach(k => {
+                const row = el('div', { class: 'row' });
+                const field = el('div', { class: 'field', style: 'flex:1; min-width:300px;' });
+                field.append(el('label', {}, k));
+                field.append(el('input', { type: 'text', value: reasons[k] || '', id: 'reason-' + k }));
+                row.append(field);
+                container.append(row);
+            });
+        }
+        async function saveCarrier() {
+            try {
+                const reasons = {};
+                REASON_KEYS.forEach(k => { reasons[k] = document.getElementById('reason-' + k).value; });
+                await patchSettings({
+                    high_value_threshold: parseInt(document.getElementById('high-value-threshold').value, 10) || 0,
+                    label_max_age_hours: parseInt(document.getElementById('label-max-age').value, 10) || 8,
+                    carrier_rules: {
+                        weight_crossover_lb: parseFloat(document.getElementById('rule-weight-crossover').value),
+                        dim_weight_warn: parseFloat(document.getElementById('rule-dim-warn').value),
+                        dim_weight_override: parseFloat(document.getElementById('rule-dim-override').value),
+                        longest_side_max_in: parseFloat(document.getElementById('rule-longest-side').value),
+                        max_weight_usps_lb: parseFloat(document.getElementById('rule-max-weight-usps').value),
+                        rural_ca_shipping_max: parseFloat(document.getElementById('rule-rural-ca').value),
+                        usps_to_ups_ca_shipping_min: parseFloat(document.getElementById('rule-usps-up-ca').value),
+                    },
+                    carrier_reasons: reasons,
+                });
+                showStatus('Carrier settings saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- stations --------
+        function renderStations() {
+            const tbody = document.querySelector('#stations-table tbody');
+            tbody.innerHTML = '';
+            (settings.stations || []).forEach((s, i) => {
+                const tr = el('tr');
+                tr.append(
+                    el('td', {}, el('input', { type: 'text', value: s.id, 'data-i': i, 'data-k': 'id' })),
+                    el('td', {}, el('input', { type: 'text', value: s.label || '', 'data-i': i, 'data-k': 'label' })),
+                    el('td', {}, el('input', { type: 'text', value: s.host || '', 'data-i': i, 'data-k': 'host' })),
+                    el('td', {}, el('input', { type: 'number', value: s.port || 5050, 'data-i': i, 'data-k': 'port' })),
+                    el('td', {}, el('input', { type: 'checkbox', checked: !!s.local, 'data-i': i, 'data-k': 'local' })),
+                    el('td', {}, el('button', { class: 'danger', onclick: () => { settings.stations.splice(i, 1); renderStations(); } }, 'remove')),
+                );
+                tbody.append(tr);
+            });
+            document.getElementById('default-station').value = settings.default_station_id || '';
+        }
+        function readStationsTable() {
+            document.querySelectorAll('#stations-table tbody input').forEach(inp => {
+                const i = +inp.dataset.i, k = inp.dataset.k;
+                let v;
+                if (k === 'local') v = inp.checked;
+                else if (k === 'port') v = parseInt(inp.value, 10) || 5050;
+                else v = inp.value;
+                settings.stations[i][k] = v;
+            });
+            settings.default_station_id = document.getElementById('default-station').value;
+        }
+        function addStationRow() {
+            settings.stations.push({ id: '', label: '', host: '127.0.0.1', port: 5050, local: false });
+            renderStations();
+        }
+        async function saveStations() {
+            try {
+                readStationsTable();
+                await patchSettings({
+                    stations: settings.stations,
+                    default_station_id: settings.default_station_id,
+                });
+                showStatus('Stations saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- shipper origin --------
+        function renderOrigin() {
+            const o = settings.shipper_origin || {};
+            document.getElementById('origin-company').value = o.company || '';
+            document.getElementById('origin-phone').value = o.phone || '';
+            document.getElementById('origin-addr1').value = o.address1 || '';
+            document.getElementById('origin-addr2').value = o.address2 || '';
+            document.getElementById('origin-city').value = o.city || '';
+            document.getElementById('origin-state').value = o.state || '';
+            document.getElementById('origin-postal').value = o.postal_code || '';
+            document.getElementById('origin-country').value = o.country || 'US';
+            document.getElementById('fallback-phone').value = settings.fallback_customer_phone || '';
+        }
+        async function saveOrigin() {
+            try {
+                await patchSettings({
+                    shipper_origin: {
+                        company: document.getElementById('origin-company').value,
+                        address1: document.getElementById('origin-addr1').value,
+                        address2: document.getElementById('origin-addr2').value,
+                        city: document.getElementById('origin-city').value,
+                        state: document.getElementById('origin-state').value,
+                        postal_code: document.getElementById('origin-postal').value,
+                        country: document.getElementById('origin-country').value,
+                        phone: document.getElementById('origin-phone').value,
+                    },
+                    fallback_customer_phone: document.getElementById('fallback-phone').value,
+                });
+                showStatus('Shipper origin saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- shiprush --------
+        function renderShipRush() {
+            const accBody = document.querySelector('#accounts-table tbody');
+            accBody.innerHTML = '';
+            const accounts = settings.shiprush_accounts || {};
+            Object.entries(accounts).forEach(([slot, guid]) => accBody.append(accRow(slot, guid)));
+
+            const svcBody = document.querySelector('#services-table tbody');
+            svcBody.innerHTML = '';
+            const services = settings.shiprush_services || {};
+            Object.entries(services).forEach(([slot, s]) => svcBody.append(svcRow(slot, s)));
+
+            const mBody = document.querySelector('#methods-table tbody');
+            mBody.innerHTML = '';
+            const methods = settings.carrier_methods || {};
+            Object.entries(methods).forEach(([slot, m]) => mBody.append(methodRow(slot, m)));
+        }
+        function accRow(slot, guid) {
+            const tr = el('tr');
+            const slotI = el('input', { type: 'text', value: slot });
+            const guidI = el('input', { type: 'text', value: guid });
+            tr.dataset.kind = 'acc';
+            tr.append(el('td', {}, slotI), el('td', {}, guidI), el('td', {}, el('button', { class: 'danger', onclick: () => tr.remove() }, 'remove')));
+            return tr;
+        }
+        function addAccountRow() { document.querySelector('#accounts-table tbody').append(accRow('', '')); }
+
+        function svcRow(slot, s) {
+            const tr = el('tr');
+            const i1 = el('input', { type: 'text', value: slot });
+            const i2 = el('input', { type: 'text', value: s.carrier_id || '' });
+            const i3 = el('input', { type: 'text', value: s.account_key || '' });
+            const i4 = el('input', { type: 'text', value: s.service_code || '' });
+            const i5 = el('input', { type: 'checkbox', checked: !!s.is_one_rate });
+            tr.append(
+                el('td', {}, i1),
+                el('td', {}, i2),
+                el('td', {}, i3),
+                el('td', {}, i4),
+                el('td', {}, i5),
+                el('td', {}, el('button', { class: 'danger', onclick: () => tr.remove() }, 'remove')),
+            );
+            return tr;
+        }
+        function addServiceRow() { document.querySelector('#services-table tbody').append(svcRow('', {})); }
+
+        function methodRow(slot, m) {
+            const tr = el('tr');
+            const i1 = el('input', { type: 'text', value: slot });
+            const i2 = el('input', { type: 'text', value: m.id || '' });
+            const i3 = el('input', { type: 'text', value: m.refName || '' });
+            tr.append(
+                el('td', {}, i1),
+                el('td', {}, i2),
+                el('td', {}, i3),
+                el('td', {}, el('button', { class: 'danger', onclick: () => tr.remove() }, 'remove')),
+            );
+            return tr;
+        }
+        function addMethodRow() { document.querySelector('#methods-table tbody').append(methodRow('', {})); }
+
+        async function saveShipRush() {
+            try {
+                const accounts = {};
+                document.querySelectorAll('#accounts-table tbody tr').forEach(tr => {
+                    const inps = tr.querySelectorAll('input');
+                    const slot = inps[0].value.trim();
+                    if (slot) accounts[slot] = inps[1].value.trim();
+                });
+                const services = {};
+                document.querySelectorAll('#services-table tbody tr').forEach(tr => {
+                    const inps = tr.querySelectorAll('input');
+                    const slot = inps[0].value.trim();
+                    if (!slot) return;
+                    services[slot] = {
+                        carrier_id: inps[1].value.trim(),
+                        account_key: inps[2].value.trim(),
+                        service_code: inps[3].value.trim(),
+                        is_one_rate: inps[4].checked,
+                    };
+                });
+                const methods = {};
+                document.querySelectorAll('#methods-table tbody tr').forEach(tr => {
+                    const inps = tr.querySelectorAll('input');
+                    const slot = inps[0].value.trim();
+                    if (slot) methods[slot] = { id: inps[1].value.trim(), refName: inps[2].value.trim() };
+                });
+                await patchSettings({
+                    shiprush_accounts: accounts,
+                    shiprush_services: services,
+                    carrier_methods: methods,
+                });
+                showStatus('ShipRush settings saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- amazon methods --------
+        function renderAmazon() {
+            document.getElementById('amazon-methods').value = (settings.amazon_methods || []).join('\n');
+        }
+        async function saveAmazon() {
+            try {
+                const lines = document.getElementById('amazon-methods').value
+                    .split('\n').map(s => s.trim()).filter(Boolean);
+                await patchSettings({ amazon_methods: lines });
+                showStatus('Amazon methods saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- override SKUs --------
+        function renderOverrides() {
+            document.getElementById('override-skus').value = (settings.override_exception_skus || []).join('\n');
+        }
+        async function saveOverrides() {
+            try {
+                const lines = document.getElementById('override-skus').value
+                    .split('\n').map(s => s.trim()).filter(Boolean);
+                await patchSettings({ override_exception_skus: lines });
+                showStatus('Override SKUs saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        function parseSkuCsv(text) {
+            // Strip BOM, normalize newlines, split. CSV is one column so
+            // the simple "first cell before the first comma" parse is
+            // correct without a full CSV state machine.
+            const rows = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').split('\n');
+            const out = [];
+            const seen = new Set();
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i].trim();
+                if (!row) continue;
+                const cell = row.split(',')[0].trim().replace(/^"|"$/g, '');
+                if (!cell) continue;
+                if (i === 0 && cell.toLowerCase() === 'sku') continue;
+                if (seen.has(cell)) continue;
+                seen.add(cell);
+                out.push(cell);
+            }
+            return out;
+        }
+
+        document.getElementById('override-csv-file').addEventListener('change', async (ev) => {
+            const file = ev.target.files && ev.target.files[0];
+            const statusEl = document.getElementById('override-csv-status');
+            if (!file) return;
+            try {
+                const text = await file.text();
+                const imported = parseSkuCsv(text);
+                const mode = document.getElementById('override-csv-mode').value;
+                const textarea = document.getElementById('override-skus');
+                if (mode === 'append') {
+                    const current = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+                    const merged = Array.from(new Set([...current, ...imported]));
+                    const added = merged.length - current.length;
+                    textarea.value = merged.join('\n');
+                    statusEl.textContent = `Loaded ${imported.length} from ${file.name}; ${added} new after dedup. Click Save to apply.`;
+                } else {
+                    textarea.value = imported.join('\n');
+                    statusEl.textContent = `Loaded ${imported.length} SKU(s) from ${file.name}. Click Save to apply.`;
+                }
+            } catch (e) {
+                statusEl.textContent = 'Import failed: ' + e.message;
+            } finally {
+                ev.target.value = '';  // allow re-import of the same filename
+            }
+        });
+
+        // -------- users --------
+        async function renderUsers() {
+            const tbody = document.querySelector('#users-table tbody');
+            tbody.innerHTML = '';
+            const users = await getJSON('/api/users');
+            users.forEach(u => {
+                const tr = el('tr');
+                const roleSel = el('select');
+                ['user', 'admin'].forEach(r => roleSel.append(el('option', { value: r }, r)));
+                roleSel.value = u.role;
+                roleSel.addEventListener('change', async () => {
+                    try {
+                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}/role`, {
+                            method: 'PUT', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ role: roleSel.value }),
+                        });
+                        const body = await r.json();
+                        if (!r.ok) throw new Error(body.message);
+                        showStatus('Role updated');
+                    } catch (e) { showStatus(e.message, true); renderUsers(); }
+                });
+                const pwBtn = el('button', { class: 'secondary', onclick: async () => {
+                    const pw = prompt(`New password for ${u.username}`);
+                    if (!pw) return;
+                    try {
+                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}/password`, {
+                            method: 'PUT', credentials: 'same-origin',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: pw }),
+                        });
+                        const body = await r.json();
+                        if (!r.ok) throw new Error(body.message);
+                        showStatus('Password updated');
+                    } catch (e) { showStatus(e.message, true); }
+                } }, 'reset password');
+                const delBtn = el('button', { class: 'danger', onclick: async () => {
+                    if (!confirm(`Delete user "${u.username}"?`)) return;
+                    try {
+                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}`, {
+                            method: 'DELETE', credentials: 'same-origin',
+                        });
+                        const body = await r.json();
+                        if (!r.ok) throw new Error(body.message);
+                        showStatus('User deleted');
+                        renderUsers();
+                    } catch (e) { showStatus(e.message, true); }
+                } }, 'delete');
+                tr.append(
+                    el('td', {}, u.username),
+                    el('td', {}, roleSel),
+                    el('td', {}, pwBtn, ' ', delBtn),
+                );
+                tbody.append(tr);
+            });
+        }
+        async function addUser() {
+            const username = document.getElementById('new-username').value.trim();
+            const password = document.getElementById('new-password').value;
+            const role = document.getElementById('new-role').value;
+            if (!username || !password) { showStatus('username + password required', true); return; }
+            try {
+                const r = await fetch('/api/users', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, role }),
+                });
+                const body = await r.json();
+                if (!r.ok) throw new Error(body.message);
+                showStatus('User added');
+                document.getElementById('new-username').value = '';
+                document.getElementById('new-password').value = '';
+                renderUsers();
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- secrets --------
+        async function renderSecrets() {
+            const container = document.getElementById('secrets-fields');
+            container.innerHTML = '';
+            const presence = await getJSON('/api/settings/secrets/presence');
+            SECRET_KEYS.forEach(k => {
+                const row = el('div', { class: 'row secret-row' });
+                const field = el('div', { class: 'field', style: 'flex:1; min-width:320px;' });
+                field.append(el('label', {}, k));
+                field.append(el('input', { type: 'password', placeholder: presence[k] ? '(current value present)' : '(unset)', id: 'secret-' + k }));
+                row.append(field);
+                const status = el('span', { class: 'secret-status ' + (presence[k] ? 'set' : 'unset') }, presence[k] ? 'set' : 'unset');
+                row.append(status);
+                container.append(row);
+            });
+        }
+        async function saveSecrets() {
+            try {
+                const body = {};
+                SECRET_KEYS.forEach(k => {
+                    const v = document.getElementById('secret-' + k).value;
+                    if (v) body[k] = v;
+                });
+                if (Object.keys(body).length === 0) {
+                    showStatus('No values to save');
+                    return;
+                }
+                const r = await fetch('/api/settings/secrets', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const resBody = await r.json();
+                if (!r.ok) throw new Error(resBody.message);
+                showStatus('Secrets saved (' + resBody.updated.join(', ') + ')');
+                SECRET_KEYS.forEach(k => { document.getElementById('secret-' + k).value = ''; });
+                renderSecrets();
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- boot --------
+        (async function init() {
+            try {
+                settings = await getJSON('/api/settings');
+                renderBoxes(); renderFedex(); renderCarrier(); renderStations();
+                renderOrigin(); renderShipRush(); renderAmazon(); renderOverrides();
+                renderUsers(); renderSecrets();
+            } catch (e) {
+                showStatus('Load failed: ' + e.message, true);
+            }
+        })();
+    </script>
+</body>
+</html>

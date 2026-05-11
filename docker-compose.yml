@@ -1,0 +1,11 @@
+services:
+  dockd:
+    build: .
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./label_history:/app/label_history
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    restart: unless-stopped

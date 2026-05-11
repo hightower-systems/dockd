@@ -1,0 +1,180 @@
+"""Tests for the settings blueprint admin gating + behavior."""
+
+
+class TestRoleGating:
+
+    def test_settings_page_blocks_anonymous(self, client):
+        resp = client.get('/settings')
+        assert resp.status_code == 401
+
+    def test_settings_page_blocks_user_role(self, auth_client):
+        resp = auth_client.get('/settings')
+        assert resp.status_code == 403
+
+    def test_settings_page_allows_admin(self, admin_client):
+        resp = admin_client.get('/settings')
+        assert resp.status_code == 200
+        assert b'DOCKD' in resp.data
+
+    def test_api_settings_blocks_anonymous(self, client):
+        resp = client.get('/api/settings')
+        assert resp.status_code == 401
+
+    def test_api_settings_blocks_user_role(self, auth_client):
+        resp = auth_client.get('/api/settings')
+        assert resp.status_code == 403
+
+    def test_api_settings_allows_admin(self, admin_client):
+        resp = admin_client.get('/api/settings')
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert 'high_value_threshold' in body
+
+
+class TestPublicSettings:
+
+    def test_public_settings_requires_login(self, client):
+        resp = client.get('/api/settings/public')
+        assert resp.status_code == 401
+
+    def test_public_settings_for_logged_in_user(self, auth_client):
+        resp = auth_client.get('/api/settings/public')
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert 'high_value_threshold' in body
+        assert 'amazon_methods' in body
+        # Internal-only fields must not leak.
+        assert 'shiprush_accounts' not in body
+
+
+class TestSettingsPatch:
+
+    def test_patch_threshold(self, admin_client):
+        resp = admin_client.patch(
+            '/api/settings', json={'high_value_threshold': 350},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body['settings']['high_value_threshold'] == 350
+
+        # Round-trip via GET.
+        resp2 = admin_client.get('/api/settings')
+        assert resp2.get_json()['high_value_threshold'] == 350
+
+    def test_patch_rejects_non_object(self, admin_client):
+        resp = admin_client.patch('/api/settings', json=[1, 2, 3])
+        assert resp.status_code == 400
+
+
+class TestUsersAPI:
+
+    def test_list_users_blocks_user(self, auth_client):
+        resp = auth_client.get('/api/users')
+        assert resp.status_code == 403
+
+    def test_list_users_admin(self, admin_client):
+        resp = admin_client.get('/api/users')
+        assert resp.status_code == 200
+        usernames = [u['username'] for u in resp.get_json()]
+        assert 'admin' in usernames
+
+    def test_add_then_remove_user(self, admin_client):
+        resp = admin_client.post('/api/users', json={
+            'username': 'temp_user', 'password': 'pw1234', 'role': 'user',
+        })
+        assert resp.status_code == 200
+        resp2 = admin_client.delete('/api/users/temp_user')
+        assert resp2.status_code == 200
+
+    def test_cannot_delete_self(self, admin_client):
+        resp = admin_client.delete('/api/users/admin')
+        # The admin session name is 'admin' in admin_client fixture; the
+        # self-delete check should fire before the last-admin check.
+        assert resp.status_code == 400
+
+
+class TestForcedPasswordChange:
+
+    def test_gate_blocks_other_endpoints(self, client, app):
+        """When a session is flagged for password change, every
+        endpoint except the allow-list returns 403 with the flag set."""
+        store = app.users_store
+        store.add_user('forced', 'first123', 'user', must_change_password=True)
+        try:
+            with client.session_transaction() as sess:
+                sess['user'] = {'name': 'forced', 'role': 'user', 'must_change_password': True}
+            resp = client.get('/get_order_details?ticket=SO1')
+            assert resp.status_code == 403
+            body = resp.get_json()
+            assert body['must_change_password'] is True
+        finally:
+            store.remove_user('forced')
+
+    def test_change_password_endpoint(self, client, app):
+        store = app.users_store
+        store.add_user('rotator', 'first123', 'user', must_change_password=True)
+        try:
+            with client.session_transaction() as sess:
+                sess['user'] = {'name': 'rotator', 'role': 'user', 'must_change_password': True}
+            # Allowed during forced-change state.
+            resp = client.post('/api/change-password', json={
+                'current_password': 'first123',
+                'new_password': 'second456',
+            })
+            assert resp.status_code == 200
+            assert store.verify('rotator', 'second456')['must_change_password'] is False
+            # Subsequent ordinary endpoints should now respond.
+            resp2 = client.get('/api/settings/public')
+            assert resp2.status_code == 200
+        finally:
+            store.remove_user('rotator')
+
+    def test_change_password_wrong_current_rejected(self, client, app):
+        store = app.users_store
+        store.add_user('rotator2', 'first123', 'user', must_change_password=True)
+        try:
+            with client.session_transaction() as sess:
+                sess['user'] = {'name': 'rotator2', 'role': 'user', 'must_change_password': True}
+            resp = client.post('/api/change-password', json={
+                'current_password': 'WRONG',
+                'new_password': 'second456',
+            })
+            assert resp.status_code == 400
+        finally:
+            store.remove_user('rotator2')
+
+
+class TestOverrideSkusPatch:
+    """Settings page imports CSVs client-side and submits the parsed
+    list via PATCH /api/settings. This test confirms the server-side
+    half of that contract: a list of SKUs round-trips through the
+    settings store."""
+
+    def test_patch_replaces_override_list(self, admin_client):
+        resp = admin_client.patch(
+            '/api/settings',
+            json={'override_exception_skus': ['ABC-1', 'XYZ-9']},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body['settings']['override_exception_skus'] == ['ABC-1', 'XYZ-9']
+
+    def test_patch_empty_list_clears(self, admin_client):
+        admin_client.patch('/api/settings', json={'override_exception_skus': ['ABC-1']})
+        admin_client.patch('/api/settings', json={'override_exception_skus': []})
+        resp = admin_client.get('/api/settings')
+        assert resp.get_json()['override_exception_skus'] == []
+
+
+class TestSecretsAPI:
+
+    def test_secrets_presence_admin_only(self, auth_client, admin_client):
+        assert auth_client.get('/api/settings/secrets/presence').status_code == 403
+        resp = admin_client.get('/api/settings/secrets/presence')
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert 'SHIPRUSH_TOKEN' in body
+
+    def test_secrets_rejects_unknown_keys(self, admin_client):
+        resp = admin_client.post('/api/settings/secrets', json={'NOT_A_KEY': 'x'})
+        assert resp.status_code == 400
