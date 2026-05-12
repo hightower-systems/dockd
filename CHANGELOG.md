@@ -2,6 +2,61 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.6.1] - 2026-05-12
+
+"UPC scan matching restored" patch. Surfaced during the first live
+go-live: operators were getting "INVALID ITEM" on every UPC scan,
+even though the order's items came back from Sentry with their UPCs
+populated. Root cause was a pre-existing gap in dockd's scan
+verifier -- it compared the scan against `i.sku`, `i.item.refName`,
+and an unused-since-NetSuite `i.valid_scans` array, but never
+`i.upc`. Fix is two lines + a render polish.
+
+### Fixed
+
+- **`verifyItem` and `verifyLinkItem` (`index.html`) now match
+  scans against `i.upc`** in addition to SKU, display name, and the
+  legacy `valid_scans` array. UPC values arrive from Sentry's GET
+  `/api/v1/dockd/orders/<so>` response on every line and were
+  already populated -- they just weren't being checked. One added
+  line in each function.
+- **`renderItems` and the link-modal item renderer** now show
+  `<sku>  •  UPC <upc>` inline under each item so operators can
+  visually confirm the scan target. UPC rendered in monospace.
+  When the order's item row has no UPC populated upstream, the UPC
+  segment is omitted (no empty bullet).
+
+### Added -- Regression tests
+
+- **`tests/blueprints/test_index_template.py::TestUpcScanMatching`**
+  (3 tests):
+  - `verifyItem` source contains `i.upc`
+  - `verifyLinkItem` source contains `i.upc`
+  - Rendered `/` includes the UPC label + render-path variable
+
+### Tests
+
+- 191 passing (188 -> 191).
+
+### Operator note
+
+If you're still seeing "INVALID ITEM" after upgrading, check that
+the item's `upc` column is populated in Sentry's `items` table.
+SQL to spot-check items on a specific order:
+
+```sql
+SELECT i.sku, i.upc, i.item_name
+  FROM items i
+  JOIN sales_order_lines sol ON sol.item_id = i.item_id
+  JOIN sales_orders so ON so.so_id = sol.so_id
+ WHERE so.so_number = '<so_number>';
+```
+
+If `upc` is NULL for some rows, load via Sentry's admin Imports
+page (`POST /api/admin/import/items`) with a CSV containing
+`sku,item_name,upc`. Each item only needs to be loaded once;
+subsequent orders for that SKU pick up the UPC automatically.
+
 ## [v0.6.0] - 2026-05-12
 
 "First end-to-end ship against a real Sentry instance" release. The

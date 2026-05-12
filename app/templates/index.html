@@ -1006,6 +1006,7 @@
             let item = itemsNeeded.find(i => {
                 if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
                 if (i.sku === inputClean) return true;
+                if (i.upc && i.upc === inputClean) return true;
                 if (i.item.refName === inputClean) return true;
                 if (i.valid_scans && i.valid_scans.filter(Boolean).includes(inputClean)) return true;
                 return false;
@@ -1022,8 +1023,9 @@
                 const div = document.createElement('div');
                 div.className = `item-row ${isComplete ? 'completed' : ''}`;
                 const showOverride = overrideExceptions.has(i.sku) && !isComplete;
+                const upcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
                 div.innerHTML = `
-                    <div style="flex-grow:1"><div class="sku">${i.item.refName}</div><div class="desc">${i.sku}</div></div>
+                    <div style="flex-grow:1"><div class="sku">${i.item.refName}</div><div class="desc">${i.sku}${upcLine}</div></div>
                     <div style="display:flex; align-items:center;">
                         <div class="qty-badge">${i.scanned_qty} / ${i.quantity}</div>
                         ${showOverride ? `<button class="manual-btn" onclick="manualOverride(${index})">&#10004;</button>` : ''}
@@ -1414,7 +1416,8 @@
                 const qtyBadgeStyle = isComplete ? 'background:var(--brand-red); color:white;' : 'background:#ddd; color:#555;';
                 const linkShowOverride = !isComplete && overrideExceptions.has(i.sku);
                 const overrideBtn = linkShowOverride ? `<button type="button" class="manual-btn" onclick="linkManualOverride(${index})" style="width:40px;height:40px;border-radius:50%;border:none;background:#e0e0e0;color:#555;cursor:pointer;font-size:18px;margin-left:10px;flex-shrink:0;" title="Mark verified">&#10004;</button>` : '';
-                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
+                const linkUpcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
+                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}${linkUpcLine}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
                 list.appendChild(div);
             });
         }
@@ -1427,6 +1430,7 @@
             let item = linkItemsNeeded.find(i => {
                 if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
                 if (i.sku === inputClean) return true;
+                if (i.upc && i.upc === inputClean) return true;
                 if (i.item.refName === inputClean) return true;
                 if (i.valid_scans && i.valid_scans.filter(Boolean).includes(inputClean)) return true;
                 return false;

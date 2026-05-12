@@ -3,8 +3,8 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.6.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-188%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.6.1-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-191%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
   **[Releases](https://github.com/hightower-systems/dockd/releases)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
@@ -189,4 +189,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.6.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.6.1
