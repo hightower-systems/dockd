@@ -150,6 +150,27 @@ def create_app(config_class=None):
     from app.models.database import init_all_dbs
     init_all_dbs()
 
+    # Crash-recovery: retry any ship_attempts rows that the previous
+    # process left mid-flight. Opt-in via env so test boots and CI do
+    # not hammer the backend. In production set
+    # DOCKD_RETRY_PENDING_ON_BOOT=true.
+    if (os.environ.get('DOCKD_RETRY_PENDING_ON_BOOT') or '').lower() in ('1', 'true', 'yes'):
+        if backend is None:
+            logger.info(
+                "DOCKD_RETRY_PENDING_ON_BOOT set but no backend wired; skipping retry.",
+            )
+        else:
+            try:
+                results = app.shipping_service.retry_recoverable_attempts()
+                if results:
+                    logger.info(
+                        "Boot-time retry drained %d ship_attempts row(s): %s",
+                        len(results),
+                        ', '.join(f"{k[:8]}->{s}" for k, s in results),
+                    )
+            except Exception as exc:
+                logger.error("Boot-time retry of ship_attempts failed: %s", exc)
+
     logger.info("Dockd v%s initialized", config.VERSION)
 
     return app

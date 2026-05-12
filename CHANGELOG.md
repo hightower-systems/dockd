@@ -2,6 +2,138 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.4.0] - 2026-05-11
+
+"Crash-recovery idempotency" release. Every backend write -- ship,
+void, manual-link -- now opens a row in a new `ship_attempts` SQLite
+table BEFORE the network call, then transitions the row to
+`success`, `unknown`, or `rejected` based on the outcome. On dockd
+restart (opt-in via `DOCKD_RETRY_PENDING_ON_BOOT=true`), any row
+still in `pending` or `unknown` state is retried with the same
+UUID4 key. Sentry's own `dockd_idempotency` table either replays
+the cached response (the original committed before the crash) or
+re-executes the write (the original rolled back) -- so retry is
+always safe, never double-ships.
+
+The local `ship_history` table also gets a v0.4.0 expansion:
+`external_id`, `customer_shipping_paid`, `order_total`,
+`sentry_audit_log_id`, `sentry_fulfillment_id`, `manual_link`,
+`idempotency_key`, `voided_at`, `void_reason` -- enough to
+reconstruct the full ship + void timeline from a single row
+without a Sentry round trip.
+
+### Added -- ship_attempts table
+
+- **`init_ship_attempts_db()`** in `app/models/database.py` creates
+  `ship_attempts (id, idempotency_key UNIQUE, operation, so_number,
+  request_body JSON, request_body_sha256, status CHECK, response_body,
+  response_status, error_kind, attempt_count, last_attempt_at,
+  created_at)` plus three indexes: status, (status, last_attempt_at)
+  for the recoverable scan, and so_number for per-order audits.
+- **`app/services/ship_attempts.py`** -- `ShipAttemptsStore` with
+  `insert_pending`, `mark_success`, `mark_unknown`, `mark_rejected`,
+  `get`, `find_recoverable`, `list_recent`, `prune_terminal`. Threading
+  lock around writes; SHA-256 body hash via a stable JSON encoder
+  (sort_keys + compact separators) so reorder-equivalent bodies
+  hash identically. `new_idempotency_key()` mints UUID4 strings;
+  centralized so all callers grep to one place.
+
+### Added -- ShippingService backend-write lifecycle
+
+- **`_classify_for_attempt(exc)`** maps backend exceptions to
+  ship_attempts states:
+  `NetworkError | IdempotencyLockTimeoutError | RateLimitedError -> unknown`
+  (retryable on next restart);
+  `AlreadyShippedError | NotInShippableStatusError |
+  UnknownOperatorError | IdempotencyMismatchError | InvalidBodyError |
+  NotFoundError | NotShippedError -> rejected` (backend has spoken);
+  unmapped `BackendError -> unknown` (defensive: a transient
+  surprise gets a retry).
+- **`ship_order`** now calls `insert_pending(operation='ship', ...)`
+  immediately before `backend.confirm_shipped`; the catch arm marks
+  the row by classification; the success path marks success with
+  the full response cached so a subsequent retry short-circuits.
+- **`void`** same lifecycle around `backend.void_ship`. A
+  `NotShippedError` (peer already voided) is treated as a successful
+  retry: mark success with `{status: 'already_voided'}` body.
+- **`manual_link`** same lifecycle around its `confirm_shipped`
+  call.
+
+### Added -- restart-time retry
+
+- **`ShippingService.retry_recoverable_attempts(limit=50)`** drains
+  pending / unknown rows via `find_recoverable`, dispatches on
+  `operation` (`ship` and `manual_link` -> `confirm_shipped`;
+  `void` -> `void_ship`), re-uses the original key, and marks the
+  row based on the new outcome.
+- **App factory boot hook** (`app/__init__.py`) calls
+  `retry_recoverable_attempts()` when `DOCKD_RETRY_PENDING_ON_BOOT`
+  is set to `1` / `true` / `yes`. Off by default so test runs and
+  CI do not hammer the backend. Logs a one-line summary of the
+  drain. Safe when `backend is None` (returns `[]`).
+
+### Added -- ship_history expansion
+
+- New columns: `external_id`, `customer_shipping_paid`,
+  `order_total`, `sentry_audit_log_id`, `sentry_fulfillment_id`,
+  `manual_link`, `idempotency_key`, `voided_at`, `void_reason`.
+  Idempotent migration via `PRAGMA table_info` + per-column
+  `ALTER TABLE ADD COLUMN` for pre-v0.4.0 databases.
+- New index `idx_ship_history_idem` on `idempotency_key` so the
+  ship-attempts row can be cross-referenced to the local history
+  row in one indexed lookup.
+- **`_log_to_db`** signature expanded; populated with the Sentry
+  IDs returned by `confirm_shipped`, the order's external_id,
+  customer_shipping_paid, order_total from the `OrderData` fetch,
+  and the per-ship `idempotency_key` from `ship_attempts`.
+- **`_mark_history_voided(so_number, voided_at, reason)`** updates
+  the matching ship_history row with `voided_at` + `void_reason`
+  after a successful void; best-effort, an exception is logged but
+  does not fail the void.
+
+### Tests
+
+- 11 new `ShipAttemptsStore` tests
+  (`tests/services/test_ship_attempts.py`): canonical-body hashing
+  (order-independent, value-sensitive), full lifecycle
+  (insert -> success / unknown / rejected), invalid-operation
+  rejection, UNIQUE-key-reuse `IntegrityError`,
+  `find_recoverable` filters to pending+unknown, `prune_terminal`
+  honors the never-prune-unknown rule.
+- 5 new retry-integration tests (`tests/services/test_ship_retry.py`)
+  with a per-test cleanup fixture so the session-scoped
+  ship_attempts table starts each test empty: pending-ship -> success,
+  unknown-ship + network-error -> still unknown,
+  pending-ship + AlreadyShipped -> rejected,
+  void dispatch, no-backend safe.
+- Total: 153 passing (137 -> 153).
+
+### Security
+
+- `ship_attempts.request_body` is JSON; **idempotency_key is not a
+  secret** (UUID4, single-use), but the body of a ship request
+  contains the operator's tracking number and the Sentry
+  fulfillment context. The file sits inside `shipping_history.db`
+  which is gitignored, lives on the container's volume, and is
+  unreadable from outside the container.
+- `mark_unknown` / `mark_rejected` recorded `error_kind` only;
+  raw `details` payloads land in `response_body` JSON. A future
+  redaction filter (planned for `v0.5.0`) will scrub `wms_t_*`
+  patterns from the error_message fields as defense in depth.
+
+### Open
+
+- **Health-check polling + connectivity indicator in the operator
+  UI** (`v0.5.0`).
+- **Log redaction** for `wms_t_*` tokens + PII (`v0.5.0`).
+- **Periodic in-process retry** (background thread that drains
+  unknown rows every N seconds while dockd is running). v0.4.0
+  only retries at restart, which covers the crash case but not the
+  case where a transient network blip recovers a few minutes later
+  while dockd stays up.
+- **Production integration test** against a real Sentry instance
+  (`v1.0.0`).
+
 ## [v0.3.0] - 2026-05-11
 
 "Scale agent v2 + browser bootstrap" release. Each pack station now

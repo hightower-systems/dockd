@@ -23,6 +23,7 @@ from app.services.backend import (
     BackendError,
     IdempotencyLockTimeoutError,
     IdempotencyMismatchError,
+    InvalidBodyError,
     NetworkError,
     NotFoundError,
     NotInShippableStatusError,
@@ -31,6 +32,7 @@ from app.services.backend import (
     RateLimitedError,
     UnknownOperatorError,
 )
+from app.services.ship_attempts import ShipAttemptsStore, new_idempotency_key
 from app.services.validation import validate_ticket
 
 logger = logging.getLogger('dockd.shipping')
@@ -201,16 +203,38 @@ def _backend_error_to_message(exc, default='Could not load order.'):
     return default
 
 
+def _classify_for_attempt(exc):
+    """Return ('unknown' | 'rejected', error_kind, status_code).
+
+    Maps backend exception types to the ship_attempts state machine:
+    unknown = retryable on the next dockd restart;
+    rejected = backend has spoken, do not retry blindly.
+    """
+    if isinstance(exc, (NetworkError, IdempotencyLockTimeoutError, RateLimitedError)):
+        return 'unknown', exc.error_kind, exc.status_code
+    if isinstance(exc, (AlreadyShippedError, NotInShippableStatusError,
+                        UnknownOperatorError, IdempotencyMismatchError,
+                        InvalidBodyError, NotFoundError, NotShippedError)):
+        return 'rejected', exc.error_kind, exc.status_code
+    if isinstance(exc, BackendError):
+        # Generic / unmapped; default to unknown so a transient
+        # backend-side issue gets a retry. If the error truly is
+        # terminal the next retry will surface the same exception.
+        return 'unknown', exc.error_kind, exc.status_code
+    return 'unknown', 'unexpected', None
+
+
 class ShippingService:
 
     def __init__(self, backend, shiprush, carrier_engine, printer,
-                 label_cache, config):
+                 label_cache, config, ship_attempts=None):
         self.backend = backend
         self.shiprush = shiprush
         self.carrier = carrier_engine
         self.printer = printer
         self.label_cache = label_cache
         self.config = config
+        self.ship_attempts = ship_attempts or ShipAttemptsStore()
         self.ship_counts = {}  # {(username, "YYYY-MM-DD"): count}
 
     # ---- order load ----------------------------------------------------
@@ -340,56 +364,83 @@ class ShippingService:
         else:
             sentry_carrier = self.carrier.current_carrier(ship_method_raw) or 'UNKNOWN'
 
-        # Confirm ship on Sentry.
+        # Confirm ship on Sentry, persisting the attempt before the
+        # network call so a crash mid-flight leaves a recoverable row.
         if not idempotency_key:
-            idempotency_key = str(uuid.uuid4())
+            idempotency_key = new_idempotency_key()
         operator_username = user or 'unknown'
 
+        confirm_kwargs = {
+            'tracking': tracking,
+            'carrier': sentry_carrier,
+            'ship_method': ship_method_raw or None,
+            'operator_username': operator_username,
+            'shipping_cost': shipping_cost,
+            'weight': weight,
+            'dims': dims,
+            'manual_link': False,
+            'idempotency_key': idempotency_key,
+        }
+        self.ship_attempts.insert_pending(
+            idempotency_key=idempotency_key,
+            operation='ship',
+            so_number=clean,
+            request_body={'so_number': clean, **confirm_kwargs},
+        )
+
         try:
-            ship_result = self.backend.confirm_shipped(
-                clean,
-                tracking=tracking,
-                carrier=sentry_carrier,
-                ship_method=ship_method_raw or None,
-                operator_username=operator_username,
-                shipping_cost=shipping_cost,
-                weight=weight,
-                dims=dims,
-                manual_link=False,
-                idempotency_key=idempotency_key,
-            )
-        except AlreadyShippedError as exc:
-            logger.warning("Sentry says SO already shipped: %s", exc.details)
-            return {
-                'status': 'error',
-                'message': (
-                    f'Label printed but order is already shipped on the upstream '
-                    f'system (tracking on file: {exc.details.get("existing_tracking", "?")}).'
-                ),
-            }
-        except (NotFoundError, NotInShippableStatusError, UnknownOperatorError,
-                IdempotencyMismatchError, RateLimitedError) as exc:
-            logger.error(
-                "Sentry rejected ship write: %s %s",
-                type(exc).__name__, exc.error_kind,
-            )
-            return {
-                'status': 'error',
-                'message': (
-                    f'Label printed but the upstream system rejected the ship: '
-                    f'{_backend_error_to_message(exc)}. Tracking on the label: {tracking}'
-                ),
-            }
-        except (NetworkError, IdempotencyLockTimeoutError, BackendError) as exc:
-            logger.error("Sentry ship write failed: %s", exc)
+            ship_result = self.backend.confirm_shipped(clean, **confirm_kwargs)
+        except BackendError as exc:
+            state, error_kind, status_code = _classify_for_attempt(exc)
+            if state == 'unknown':
+                self.ship_attempts.mark_unknown(idempotency_key, error_kind, exc.message)
+            else:
+                self.ship_attempts.mark_rejected(
+                    idempotency_key, error_kind, exc.message,
+                    details=exc.details, response_status=status_code,
+                )
+            if isinstance(exc, AlreadyShippedError):
+                logger.warning("Sentry says SO already shipped: %s", exc.details)
+                return {
+                    'status': 'error',
+                    'message': (
+                        f'Label printed but order is already shipped on the upstream '
+                        f'system (tracking on file: {exc.details.get("existing_tracking", "?")}).'
+                    ),
+                }
+            if state == 'rejected':
+                logger.error(
+                    "Sentry rejected ship write: %s %s",
+                    type(exc).__name__, exc.error_kind,
+                )
+                return {
+                    'status': 'error',
+                    'message': (
+                        f'Label printed but the upstream system rejected the ship: '
+                        f'{_backend_error_to_message(exc)}. Tracking on the label: {tracking}'
+                    ),
+                }
+            logger.error("Sentry ship write failed (unknown): %s", exc)
             return {
                 'status': 'error',
                 'message': (
                     f'Label printed but the upstream system did not confirm. '
-                    f'Tracking on the label: {tracking}. Retry from the queue.'
+                    f'Tracking on the label: {tracking}. Dockd will retry on its next restart.'
                 ),
             }
 
+        # Success path: record the response in ship_attempts so a
+        # subsequent retry would short-circuit to the cached body.
+        self.ship_attempts.mark_success(
+            idempotency_key,
+            response_body={
+                'status': ship_result.status,
+                'tracking': ship_result.tracking,
+                'shipped_at': ship_result.shipped_at,
+                'fulfillment_id': ship_result.fulfillment_id,
+                'audit_log_id': ship_result.audit_log_id,
+            },
+        )
         logger.info("Sentry confirmed ship: fulfillment_id=%s audit=%s",
                     ship_result.fulfillment_id, ship_result.audit_log_id)
 
@@ -403,6 +454,13 @@ class ShippingService:
             current_user=operator_username, ff_created_at=ff_created_at,
             order_loaded_at=order_loaded_at,
             station_id=station_id, station_label=station_label,
+            external_id=order.external_id,
+            customer_shipping_paid=order.customer_shipping_paid,
+            order_total=order.order_total,
+            sentry_audit_log_id=ship_result.audit_log_id,
+            sentry_fulfillment_id=ship_result.fulfillment_id,
+            manual_link=False,
+            idempotency_key=idempotency_key,
         )
 
         today = datetime.now().strftime('%Y-%m-%d')
@@ -488,23 +546,42 @@ class ShippingService:
             return sr_result
 
         if not idempotency_key:
-            idempotency_key = str(uuid.uuid4())
+            idempotency_key = new_idempotency_key()
+        void_kwargs = {
+            'reason': reason or 'voided via dockd',
+            'operator_username': operator_username or 'unknown',
+            'idempotency_key': idempotency_key,
+        }
+        self.ship_attempts.insert_pending(
+            idempotency_key=idempotency_key,
+            operation='void',
+            so_number=clean,
+            request_body={'so_number': clean, **void_kwargs},
+        )
+
         try:
-            void_result = self.backend.void_ship(
-                clean,
-                reason=reason or 'voided via dockd',
-                operator_username=operator_username or 'unknown',
-                idempotency_key=idempotency_key,
-            )
-        except NotShippedError:
+            void_result = self.backend.void_ship(clean, **void_kwargs)
+        except NotShippedError as exc:
             # Sentry says it's already not in SHIPPED state -- somebody
             # else already voided. Treat as success (ShipRush refunded;
             # backend already in the desired state).
+            self.ship_attempts.mark_success(
+                idempotency_key,
+                response_body={'status': 'already_voided', 'message': exc.message},
+            )
             return {
                 'status': 'success',
                 'message': 'Label voided. Upstream order was already reverted.',
             }
         except BackendError as exc:
+            state, error_kind, status_code = _classify_for_attempt(exc)
+            if state == 'unknown':
+                self.ship_attempts.mark_unknown(idempotency_key, error_kind, exc.message)
+            else:
+                self.ship_attempts.mark_rejected(
+                    idempotency_key, error_kind, exc.message,
+                    details=exc.details, response_status=status_code,
+                )
             logger.error("backend void_ship failed: %s", exc)
             return {
                 'status': 'error',
@@ -514,6 +591,18 @@ class ShippingService:
                 ),
             }
 
+        self.ship_attempts.mark_success(
+            idempotency_key,
+            response_body={
+                'status': void_result.status,
+                'voided_at': void_result.voided_at,
+                'audit_log_id': void_result.audit_log_id,
+            },
+        )
+        try:
+            self._mark_history_voided(clean, void_result.voided_at, reason)
+        except Exception as e:
+            logger.warning("Could not mark ship_history voided for %s: %s", clean, e)
         return {
             'status': 'success',
             'message': sr_result.get('message') or 'Label voided.',
@@ -540,30 +629,149 @@ class ShippingService:
         logger.info("Manual link: order %s -> tracking %s", clean, tracking)
 
         if not idempotency_key:
-            idempotency_key = str(uuid.uuid4())
+            idempotency_key = new_idempotency_key()
+
+        confirm_kwargs = {
+            'tracking': tracking,
+            'carrier': (carrier or _carrier_from_tracking(tracking)),
+            'ship_method': ship_method,
+            'operator_username': user or 'unknown',
+            'shipping_cost': None,
+            'weight': None,
+            'dims': None,
+            'manual_link': True,
+            'idempotency_key': idempotency_key,
+        }
+        self.ship_attempts.insert_pending(
+            idempotency_key=idempotency_key,
+            operation='manual_link',
+            so_number=clean,
+            request_body={'so_number': clean, **confirm_kwargs},
+        )
 
         try:
-            ship_result = self.backend.confirm_shipped(
-                clean,
-                tracking=tracking,
-                carrier=(carrier or _carrier_from_tracking(tracking)),
-                ship_method=ship_method,
-                operator_username=user or 'unknown',
-                shipping_cost=None,
-                weight=None,
-                dims=None,
-                manual_link=True,
-                idempotency_key=idempotency_key,
-            )
+            ship_result = self.backend.confirm_shipped(clean, **confirm_kwargs)
         except BackendError as exc:
+            state, error_kind, status_code = _classify_for_attempt(exc)
+            if state == 'unknown':
+                self.ship_attempts.mark_unknown(idempotency_key, error_kind, exc.message)
+            else:
+                self.ship_attempts.mark_rejected(
+                    idempotency_key, error_kind, exc.message,
+                    details=exc.details, response_status=status_code,
+                )
             return {'status': 'error', 'message': _backend_error_to_message(exc)}
 
+        self.ship_attempts.mark_success(
+            idempotency_key,
+            response_body={
+                'status': ship_result.status,
+                'tracking': ship_result.tracking,
+                'shipped_at': ship_result.shipped_at,
+                'fulfillment_id': ship_result.fulfillment_id,
+                'audit_log_id': ship_result.audit_log_id,
+            },
+        )
         return {
             'status': 'success',
             'message': f'Linked {clean} to {tracking}',
             'sentry_fulfillment_id': ship_result.fulfillment_id,
             'sentry_audit_log_id': ship_result.audit_log_id,
         }
+
+    def retry_recoverable_attempts(self, *, limit=50):
+        """Drain pending / unknown rows from ship_attempts.
+
+        Called from the app factory at boot (gated on the
+        DOCKD_RETRY_PENDING_ON_BOOT env flag) to recover from a
+        process crash that left rows mid-flight. Idempotency-safe
+        by construction: Sentry's dockd_idempotency table replays
+        the cached response when the same key + body has already
+        committed there, or re-executes the write when it hasn't.
+
+        Returns a list of `(idempotency_key, new_status)` tuples
+        for logging.
+        """
+        if self.backend is None:
+            return []
+        results = []
+        rows = self.ship_attempts.find_recoverable(limit=limit)
+        for row in rows:
+            try:
+                body = json.loads(row['request_body'])
+            except Exception:
+                logger.warning(
+                    "Skipping unparseable ship_attempts row %s",
+                    row.get('idempotency_key'),
+                )
+                continue
+            op = row['operation']
+            key = row['idempotency_key']
+            so_number = row['so_number']
+            try:
+                if op == 'ship' or op == 'manual_link':
+                    self.backend.confirm_shipped(
+                        so_number,
+                        tracking=body.get('tracking'),
+                        carrier=body.get('carrier'),
+                        ship_method=body.get('ship_method'),
+                        operator_username=body.get('operator_username') or 'unknown',
+                        shipping_cost=body.get('shipping_cost'),
+                        weight=body.get('weight'),
+                        dims=body.get('dims'),
+                        manual_link=bool(body.get('manual_link', op == 'manual_link')),
+                        idempotency_key=key,
+                    )
+                elif op == 'void':
+                    self.backend.void_ship(
+                        so_number,
+                        reason=body.get('reason') or 'voided via dockd',
+                        operator_username=body.get('operator_username') or 'unknown',
+                        idempotency_key=key,
+                    )
+                else:
+                    logger.warning("Unknown operation %r in ship_attempts row %s", op, key)
+                    continue
+            except BackendError as exc:
+                state, error_kind, status_code = _classify_for_attempt(exc)
+                if state == 'unknown':
+                    self.ship_attempts.mark_unknown(key, error_kind, exc.message)
+                else:
+                    self.ship_attempts.mark_rejected(
+                        key, error_kind, exc.message,
+                        details=exc.details, response_status=status_code,
+                    )
+                results.append((key, state))
+                logger.info(
+                    "Retry %s -> %s (%s)", key[:8], state, error_kind,
+                )
+                continue
+            self.ship_attempts.mark_success(key)
+            results.append((key, 'success'))
+            logger.info("Retry %s -> success", key[:8])
+        return results
+
+    def _mark_history_voided(self, so_number, voided_at, reason):
+        """Stamp the matching ship_history row as voided.
+
+        Called from `void()` after the backend confirms the reversal
+        so the local audit trail matches the upstream state. Best-
+        effort; an exception here does not fail the void.
+        """
+        conn = get_ship_db()
+        try:
+            conn.execute(
+                """UPDATE ship_history
+                      SET voided_at = ?, void_reason = ?
+                    WHERE order_number = ?
+                      AND voided_at IS NULL""",
+                (voided_at or datetime.now().isoformat(),
+                 (reason or 'voided via dockd')[:1000],
+                 so_number),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     # ---- audit / stats -------------------------------------------------
 
@@ -592,7 +800,11 @@ class ShippingService:
                    effective_box_id, dims, weight, shipping_cost,
                    tracking, carrier_override, carrier_switched,
                    ship_method_raw, current_user, ff_created_at,
-                   order_loaded_at, station_id=None, station_label=None):
+                   order_loaded_at, station_id=None, station_label=None,
+                   external_id=None, customer_shipping_paid=None,
+                   order_total=None, sentry_audit_log_id=None,
+                   sentry_fulfillment_id=None, manual_link=False,
+                   idempotency_key=None):
         """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
@@ -626,15 +838,22 @@ class ShippingService:
                    (order_number, fulfillment_id, items_skus, box_id, dims, weight,
                     shipping_cost, tracking, carrier, ship_method, shipped_by, shipped_at,
                     ff_created_at, order_loaded_at, fulfillment_age_minutes,
-                    ship_speed_seconds, carrier_switched, station_id, station_label)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ship_speed_seconds, carrier_switched, station_id, station_label,
+                    external_id, customer_shipping_paid, order_total,
+                    sentry_audit_log_id, sentry_fulfillment_id, manual_link,
+                    idempotency_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?, ?, ?, ?, ?, ?)""",
                 (order_number, fulfillment_id, items_skus, effective_box_id,
                  dims_str, weight, shipping_cost, tracking, final_carrier,
                  ship_method_raw, current_user,
                  shipped_at.strftime('%Y-%m-%d %H:%M:%S'),
                  ff_created_at, order_loaded_at, fulfillment_age_minutes,
                  ship_speed_seconds, 1 if carrier_switched else 0,
-                 station_id or '', station_label or ''),
+                 station_id or '', station_label or '',
+                 external_id or '', customer_shipping_paid, order_total,
+                 sentry_audit_log_id, sentry_fulfillment_id,
+                 1 if manual_link else 0, idempotency_key),
             )
             conn.commit()
             conn.close()
