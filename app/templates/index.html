@@ -440,13 +440,9 @@
                 <span id="backend-health-dot" style="width:9px; height:9px; border-radius:50%; background:#666; display:inline-block;"></span>
                 <span id="backend-health-text">Sentry: checking</span>
             </div>
-            {% if current_user and current_user.role == 'admin' %}
-            <a class="sidebar-btn" href="/settings" style="text-decoration:none;">SETTINGS</a>
-            {% endif %}
+            <a class="sidebar-btn admin-only" href="/settings" style="text-decoration:none; display:none;">SETTINGS</a>
             <button type="button" class="sidebar-btn" onclick="logout()">LOGOUT</button>
-            {% if current_user and current_user.role == 'admin' %}
-            <button type="button" class="sidebar-btn exit-app-btn" onclick="shutdownApp()">EXIT</button>
-            {% endif %}
+            <button type="button" class="sidebar-btn exit-app-btn admin-only" onclick="shutdownApp()" style="display:none;">EXIT</button>
             <div style="text-align:center;font-size:0.65rem;color:rgba(255,255,255,0.3);margin-top:6px;">v{{ config.VERSION }}</div>
         </div>
     </aside>
@@ -704,6 +700,16 @@
         pollBackendHealth();
         setInterval(pollBackendHealth, 30000);
 
+        // Reveal sidebar buttons gated on admin role. Run from the JS
+        // post-login hook AND the auto-login bootstrap block so both
+        // paths land the same UI state without a full page reload.
+        function applyAdminVisibility(user) {
+            const isAdmin = !!(user && user.role === 'admin');
+            document.querySelectorAll('.admin-only').forEach(el => {
+                el.style.display = isAdmin ? '' : 'none';
+            });
+        }
+
         // Link modal state
         let linkStep = 'order';
         let linkOrderId = null;
@@ -744,6 +750,7 @@
             currentUser = {{ current_user | tojson }};
             document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
             document.getElementById('display-user').innerText = currentUser.name;
+            applyAdminVisibility(currentUser);
             if (currentUser.must_change_password) {
                 openChangePasswordOverlay('');
             } else {
@@ -774,6 +781,7 @@
                     currentUser = data.user;
                     document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
                     document.getElementById('display-user').innerText = currentUser.name;
+                    applyAdminVisibility(currentUser);
                     if (currentUser.must_change_password) {
                         openChangePasswordOverlay(pw);
                     } else {
@@ -816,6 +824,7 @@
                 if (ok && body.status === 'ok') {
                     document.getElementById('change-password-overlay').style.display = 'none';
                     if (currentUser) currentUser.must_change_password = false;
+                    applyAdminVisibility(currentUser);
                     showShipOrders();
                 } else {
                     errEl.textContent = body.message || 'Could not update password.';

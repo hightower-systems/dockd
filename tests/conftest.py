@@ -24,6 +24,19 @@ os.environ.setdefault('SECRET_KEY', 'test-secret-key')
 os.environ.setdefault('SHIPRUSH_TOKEN', 'fake-sr-token')
 os.environ.setdefault('SHIPRUSH_ENDPOINT', 'https://fake.shiprush.test/shipment/ship')
 
+# Defensive clear: a developer running an integration test against a
+# real Sentry instance may have BACKEND / SENTRY_BASE_URL /
+# DOCKD_SENTRY_TOKEN populated in their local .env. python-dotenv
+# loads that file before pytest imports `app`, which would wire a
+# real SentryBackend into the test fixture and break tests that
+# rely on backend=None or that mock the backend in a fixture. Strip
+# those values out for the duration of the test run.
+for _env_key in ('BACKEND', 'SENTRY_BASE_URL', 'DOCKD_SENTRY_TOKEN',
+                 'DOCKD_RETRY_PENDING_ON_BOOT', 'DOCKD_RETRY_POLL_INTERVAL'):
+    # Set to empty (not pop) so dotenv's "only-set-if-unset" semantics
+    # do not re-import the dev .env value during create_app().
+    os.environ[_env_key] = ''
+
 
 @pytest.fixture(scope='session')
 def app():

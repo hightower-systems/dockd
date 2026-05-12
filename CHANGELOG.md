@@ -2,6 +2,117 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.6.0] - 2026-05-12
+
+"First end-to-end ship against a real Sentry instance" release. The
+integration test ran through a complete ship + void roundtrip
+against a fresh Sentry-WMS v1.10.1 deployment and a real ShipRush
+account: dockd loaded `SO-2026-001` from Sentry, asked the
+CarrierEngine to resolve box dims, generated a real USPS Ground
+Advantage label (tracking `9434...`), wrote the ship to Sentry
+(audit_log_id 3, item_fulfillments row 1), then voided -- ShipRush
+refunded the label and Sentry reverted the SO to PACKED
+(audit_log_id 4). Two bugs surfaced from that test are fixed here.
+
+### Fixed
+
+- **`ShipRushClient._resolve_carrier` returned `None` under empty
+  `shiprush_services`** (#bug-1). With the open-source neutral
+  default of `shiprush_services={}`, every ship attempt raised
+  `TypeError: cannot unpack non-iterable NoneType object` at the
+  caller's 4-tuple unpack in `generate_label`. Refactored to a
+  `_resolve_or_fallback(*slots)` helper plus a class-level
+  `_RESOLVE_FALLBACK = ('1', 'UPS', '03', False)` so the unpack
+  always succeeds. ShipRush may still reject the request (unknown
+  account, bad service code) but with a structured ShipRush error,
+  not a Python 500.
+- **Sidebar SETTINGS + EXIT buttons invisible after JS-driven
+  login** (#bug-2). The pre-v0.6.0 template gated both buttons
+  behind `{% if current_user.role == 'admin' %}`, a server-side
+  Jinja conditional that runs at page-render time. The JS-driven
+  login attached a session AFTER the HTML was already rendered, so
+  the admin buttons were never in the DOM and only a full page
+  reload surfaced them. Fix renders both buttons unconditionally
+  with the `admin-only` class and `display:none`; a new JS helper
+  `applyAdminVisibility(currentUser)` toggles them on. Called from
+  three entry points: the auto-login bootstrap (server has
+  session), the login success branch, and the post-password-change
+  branch. No page reload needed.
+
+### Changed -- Test isolation
+
+- **`tests/conftest.py`** clears the integration-test env vars
+  (`BACKEND`, `SENTRY_BASE_URL`, `DOCKD_SENTRY_TOKEN`,
+  `DOCKD_RETRY_PENDING_ON_BOOT`, `DOCKD_RETRY_POLL_INTERVAL`)
+  before importing `app`, so a developer running tests with a
+  populated dev `.env` does not accidentally wire a real
+  SentryBackend into the test fixture. Set to empty strings (not
+  `pop`) so `python-dotenv`'s only-set-if-unset semantics do not
+  re-import the dev values during `create_app()`.
+
+### Added -- Regression tests
+
+- **`tests/services/test_shiprush_resolve.py`** (6 tests):
+  - 14 ship-method strings (every branch in `_resolve_carrier`)
+    each return a 4-tuple under empty `shiprush_services`, never
+    `None`.
+  - Carrier overrides (`UPS`, `USPS`, `FEDEX_ONE_RATE_2DAY`) also
+    fall back when their slots are absent.
+  - When the catalog IS populated, the right slot wins (USPS
+    Ground Advantage, UPS override, FedEx 2 Day one-rate, plus
+    secondary-fallback chain for Priority -> Ground Advantage).
+- **`tests/blueprints/test_index_template.py`** (3 tests):
+  - Unauthenticated GET `/` ships SETTINGS + EXIT in the HTML with
+    `admin-only` class + `display:none`.
+  - `applyAdminVisibility` helper text appears, called from the
+    auto-login block.
+  - Authenticated GET `/` still includes the buttons.
+
+### Tests
+
+- 188 passing (179 -> 188). Net +9 from the two regression
+  modules. Total breakdown:
+  - 14 `test_auth`
+  - 12 `test_index_template` (3 new)
+  - 21 `test_settings_routes`
+  - 17 `test_shipping_routes`
+  - 9 `test_backend_health`
+  - 21 `test_backend_sentry`
+  - 36 `test_carrier`
+  - 7 `test_label_cache`
+  - 9 `test_logging_redaction`
+  - 17 `test_settings`
+  - 11 `test_ship_attempts`
+  - 5 `test_ship_retry`
+  - 6 `test_shiprush_resolve` (new)
+  - 8 `test_security_regressions`
+
+### Integration test data
+
+Full step-by-step replay (Sentry seed + token issuance + dockd
+ship + void) lives in commit history. Headline numbers from the
+test:
+
+| Layer | Evidence |
+|---|---|
+| Sentry audit_log | `SHIP` (log 3) -> `SHIP_VOID` (log 4), both attributed to admin, hash-chained. |
+| Sentry sales_orders | SO-2026-001: PACKED -> SHIPPED -> PACKED (tracking + carrier nulled on void). |
+| Sentry item_fulfillments | Row 1 created, void columns populated on reversal. |
+| dockd ship_history | One row with sentry_fulfillment_id=1, sentry_audit_log_id=3, voided_at populated, void_reason captured, station_label='Pack Station Test'. |
+| dockd ship_attempts | Two rows, both status=success, UUID4 idempotency keys, one per operation. |
+| ShipRush | Real USPS label generated, then voided. Zero net carrier charge. |
+
+### Open
+
+- **Address-validation handling under real carrier checks**: UPS
+  and FedEx reject / auto-correct addresses that don't match their
+  databases. dockd surfaces ShipRush's error string verbatim today
+  (e.g. "Address was corrected by the carrier..."); a future
+  release could expose the corrected address so the operator can
+  accept the change in one click. Out of v0.6.0 scope.
+- **Integration test under a real Sentry instance, scripted**
+  (`v1.0.0`).
+
 ## [v0.5.0] - 2026-05-11
 
 "Observability + security hardening" release. The operator UI gets a

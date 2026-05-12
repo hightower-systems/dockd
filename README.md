@@ -3,8 +3,8 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.5.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-179%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.6.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-188%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
   **[Releases](https://github.com/hightower-systems/dockd/releases)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
@@ -141,32 +141,33 @@ engine, printer service, and ShipRush client; no restart required.
 python -m pytest
 ```
 
-179 tests at v0.5.0 covering authentication + role gating, forced
+188 tests at v0.6.0 covering authentication + role gating, forced
 password-change flow, CarrierEngine determinations, label-cache behavior,
 settings store + user store CRUD, the settings blueprint surface, the
 SentryBackend HTTP client (every wire-level success + failure path),
 the backend-wired shipping routes (load / ship / manual-link / void),
 ShipAttemptsStore lifecycle, the restart-time retry path for
 pending + unknown rows, BackendHealth state transitions + caching,
-the RedactionFilter (token scrub, bearer scrub, header scrub), and
-a cross-cutting security regression suite (no token leak in logs,
-TLS validation hardcoded, no scrypt hashes in responses,
-settings/users files chmod 600 after every write).
+the RedactionFilter (token scrub, bearer scrub, header scrub),
+ShipRush `_resolve_carrier` fallback (no `None` returns under empty
+settings), index-template admin-only markup, and a cross-cutting
+security regression suite (no token leak in logs, TLS validation
+hardcoded, no scrypt hashes in responses, settings/users files
+chmod 600 after every write).
 
 ## Project Status
 
-**v0.5.0** -- Observability + security hardening. Operator UI gets
-a connectivity dot polling `/api/health/backend` every 30s (cached
-on the server so 5 stations produce 1 upstream call, not 5). The
-log pipeline gets a `RedactionFilter` that scrubs `wms_t_*` bearer
-tokens and `Authorization: Bearer` strings out of every record
-before format. An opt-in periodic-retry daemon
-(`DOCKD_RETRY_POLL_INTERVAL`) drains pending / unknown
-ship_attempts rows every N seconds so a transient network blip
-doesn't have to wait for a dockd restart. A top-level
-security-regression suite codifies the threat-model invariants
-(no token leak, TLS validation hardcoded, no scrypt hashes in
-responses, settings/users files always chmod 600).
+**v0.6.0** -- First end-to-end ship against a real Sentry. A live
+integration test against a fresh Sentry-WMS v1.10.1 deployment + a
+real ShipRush account walked SO-2026-001 from PACKED -> SHIPPED ->
+PACKED (real USPS label generated, then voided). Two bugs surfaced
+and got fixes: `ShipRushClient._resolve_carrier` no longer returns
+`None` under empty `shiprush_services` settings, and the sidebar
+SETTINGS + EXIT buttons now appear after JS-driven login without a
+page reload (was previously gated by a server-render Jinja
+conditional that ran before the session attached). Test isolation
+also strengthened so a populated dev `.env` does not leak
+`BACKEND=sentry` into pytest's app fixture.
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -175,7 +176,8 @@ responses, settings/users files always chmod 600).
 | **v0.3.0** | **Scale agent v2 + browser bootstrap -- agent binds 127.0.0.1, CORS pinned to dockd origin, /whoami endpoint, browser forwards X-Sentry-Token on every dockd call, print flow flips so dockd returns ZPL and the browser forwards to localhost agent, station_label persisted in shipping_history, docs/STATION_SETUP.md walkthrough** | ✅ Released |
 | **v0.4.0** | **Crash-recovery idempotency -- ship_attempts SQLite table with pending/success/unknown/rejected state machine wrapped around every backend write (ship / void / manual_link), opt-in restart-time retry of pending+unknown rows using the same UUID4 key, expanded ship_history with Sentry IDs + voided_at + idempotency_key cross-reference** | ✅ Released |
 | **v0.5.0** | **Observability + security hardening -- backend health monitor + connectivity dot + admin details modal, RedactionFilter on every log handler (wms_t_*, Bearer, X-Sentry-Token), opt-in periodic in-process retry of unknown ship_attempts rows, security regression suite** | ✅ Released |
-| v1.0.0 | Production release -- full Sentry-WMS integration, integration tests against a real Sentry instance, migration playbook from `v0.x` deployments | Planned |
+| **v0.6.0** | **First end-to-end ship against a real Sentry-WMS + real ShipRush -- bug fixes from the integration test (ShipRush `_resolve_carrier` fallback under empty settings; sidebar admin buttons visible after JS login without page reload), conftest env-isolation so dev `.env` does not bleed into the test suite** | ✅ Released |
+| v1.0.0 | Production release -- scripted integration test against a real Sentry instance, migration playbook from `v0.x` deployments | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
 
@@ -187,4 +189,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.5.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.6.0

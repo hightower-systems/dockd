@@ -191,10 +191,19 @@ class ShipRushClient:
 
     # ---- carrier/service resolution ------------------------------------
 
+    # Fallback tuple when shiprush_services has no entry that matches.
+    # The four values follow the existing convention: carrier_id '1'
+    # (UPS), account_key 'UPS', service_code '03' (UPS Ground),
+    # is_one_rate False. Callers always unpack a 4-tuple so this is
+    # the safe shape under empty / under-configured settings.
+    _RESOLVE_FALLBACK = ('1', 'UPS', '03', False)
+
     def _resolve_carrier(self, ns_method, carrier_override):
         """Pick a row from `shiprush_services` based on override or
-        ship-method substring matching. Returns
-        (carrier_id, account_key, service_code, is_one_rate)."""
+        ship-method substring matching. Always returns a 4-tuple
+        (carrier_id, account_key, service_code, is_one_rate); falls
+        back to `_RESOLVE_FALLBACK` when no slot matches so the
+        caller never has to handle `None`."""
         services = self._services()
 
         def row(slot):
@@ -208,45 +217,50 @@ class ShipRushClient:
                 bool(r.get('is_one_rate', False)),
             )
 
-        if carrier_override == 'UPS' and 'UPS_GROUND' in services:
-            return row('UPS_GROUND')
-        if carrier_override == 'USPS' and 'USPS_GROUND_ADV' in services:
-            return row('USPS_GROUND_ADV')
-        if carrier_override == 'FEDEX_ONE_RATE_2DAY' and 'FEDEX_ONE_RATE' in services:
-            return row('FEDEX_ONE_RATE')
+        def _resolve_or_fallback(*slots):
+            for slot in slots:
+                got = row(slot)
+                if got is not None:
+                    return got
+            return self._RESOLVE_FALLBACK
+
+        if carrier_override == 'UPS':
+            return _resolve_or_fallback('UPS_GROUND')
+        if carrier_override == 'USPS':
+            return _resolve_or_fallback('USPS_GROUND_ADV')
+        if carrier_override == 'FEDEX_ONE_RATE_2DAY':
+            return _resolve_or_fallback('FEDEX_ONE_RATE')
 
         method = (ns_method or '').lower()
 
         if 'usps' in method or 'post' in method or 'media' in method:
-            if 'priority' in method and 'USPS_PRIORITY' in services:
-                return row('USPS_PRIORITY')
-            if 'media' in method and 'USPS_MEDIA_MAIL' in services:
-                return row('USPS_MEDIA_MAIL')
-            if 'first' in method and 'USPS_FIRST_CLASS' in services:
-                return row('USPS_FIRST_CLASS')
-            if 'parcel' in method and 'USPS_PARCEL' in services:
-                return row('USPS_PARCEL')
-            return row('USPS_GROUND_ADV') or row('UPS_GROUND')
+            if 'priority' in method:
+                return _resolve_or_fallback('USPS_PRIORITY', 'USPS_GROUND_ADV')
+            if 'media' in method:
+                return _resolve_or_fallback('USPS_MEDIA_MAIL', 'USPS_GROUND_ADV')
+            if 'first' in method:
+                return _resolve_or_fallback('USPS_FIRST_CLASS', 'USPS_GROUND_ADV')
+            if 'parcel' in method:
+                return _resolve_or_fallback('USPS_PARCEL', 'USPS_GROUND_ADV')
+            return _resolve_or_fallback('USPS_GROUND_ADV', 'UPS_GROUND')
 
         if 'fedex' in method:
             if '2day' in method or '2 day' in method or 'second day' in method:
-                return row('FEDEX_2DAY')
+                return _resolve_or_fallback('FEDEX_2DAY', 'FEDEX_GROUND')
             if 'overnight' in method:
-                return row('FEDEX_OVERNIGHT')
+                return _resolve_or_fallback('FEDEX_OVERNIGHT', 'FEDEX_GROUND')
             if 'one rate' in method or 'onerate' in method:
-                return row('FEDEX_ONE_RATE')
-            if 'ground' in method:
-                return row('FEDEX_GROUND')
-            return row('FEDEX_GROUND')
+                return _resolve_or_fallback('FEDEX_ONE_RATE', 'FEDEX_GROUND')
+            return _resolve_or_fallback('FEDEX_GROUND')
 
         if 'next day' in method:
-            return row('UPS_NEXT_DAY')
+            return _resolve_or_fallback('UPS_NEXT_DAY', 'UPS_GROUND')
         if '2nd day' in method:
-            return row('UPS_2ND_DAY')
+            return _resolve_or_fallback('UPS_2ND_DAY', 'UPS_GROUND')
         if '3 day' in method:
-            return row('UPS_3_DAY')
+            return _resolve_or_fallback('UPS_3_DAY', 'UPS_GROUND')
 
-        return row('UPS_GROUND')
+        return _resolve_or_fallback('UPS_GROUND')
 
     # ---- response parsing + friendly error -----------------------------
 
