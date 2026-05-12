@@ -138,3 +138,14 @@ def void_label():
         operator_username=session.get('user', {}).get('name'),
     )
     return jsonify(result)
+
+
+@shipping_bp.route('/api/health/backend', methods=['GET'])
+@login_required
+def backend_health():
+    """Operator-UI connectivity dot polls this every 30s.
+
+    Read-through cache on the server side so 5 stations polling in
+    parallel do not turn into 5 simultaneous probes of Sentry.
+    """
+    return jsonify(current_app.backend_health.status())

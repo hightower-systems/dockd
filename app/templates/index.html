@@ -406,6 +406,14 @@
         </div>
     </div>
 
+    <div id="backend-health-modal" class="modal-overlay">
+        <div class="modal-content" style="max-width:480px;">
+            <h2 style="margin-top:0; color:var(--brand-red); letter-spacing:1px;">UPSTREAM CONNECTIVITY</h2>
+            <div id="backend-health-details" style="text-align:left; font-family:monospace; font-size:13px; line-height:1.7; background:rgba(0,0,0,0.04); padding:14px 16px; border-radius:6px; margin:14px 0;">Loading...</div>
+            <button onclick="document.getElementById('backend-health-modal').style.display='none'" style="background:var(--brand-red); color:white; border:none; padding:10px 24px; font-weight:700; border-radius:6px; cursor:pointer;">Close</button>
+        </div>
+    </div>
+
     <!-- ====== SIDEBAR ====== -->
     <aside class="sidebar">
         <div class="sidebar-logo">DOCKD <span>Shipping</span></div>
@@ -428,6 +436,10 @@
         <div class="sidebar-footer">
             <div class="user-badge" id="display-user">...</div>
             <div id="station-label-display" style="text-align:center; font-size:0.7rem; color:rgba(255,255,255,0.5); letter-spacing:1px; text-transform:uppercase; padding:4px 0;"></div>
+            <div id="backend-health-row" onclick="showBackendHealthModal()" style="display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; padding:4px 0; font-size:0.65rem; color:rgba(255,255,255,0.55); letter-spacing:1px; text-transform:uppercase;" title="Click for details">
+                <span id="backend-health-dot" style="width:9px; height:9px; border-radius:50%; background:#666; display:inline-block;"></span>
+                <span id="backend-health-text">Sentry: checking</span>
+            </div>
             {% if current_user and current_user.role == 'admin' %}
             <a class="sidebar-btn" href="/settings" style="text-decoration:none;">SETTINGS</a>
             {% endif %}
@@ -633,6 +645,64 @@
         }
 
         bootstrapAgent();
+
+        // ====== BACKEND CONNECTIVITY DOT ======
+        // Polls /api/health/backend every 30s. Server caches the
+        // probe for 30s so multiple stations polling in parallel
+        // do not hammer the upstream system.
+        let lastBackendHealth = null;
+
+        async function pollBackendHealth() {
+            try {
+                const r = await dockdApi('/api/health/backend', { method: 'GET' });
+                if (!r.ok) return;
+                const data = await r.json();
+                lastBackendHealth = data;
+                renderBackendHealthDot(data);
+            } catch (e) {
+                // Network blip; leave the dot at its current color.
+            }
+        }
+
+        function renderBackendHealthDot(data) {
+            const dot = document.getElementById('backend-health-dot');
+            const txt = document.getElementById('backend-health-text');
+            if (!dot || !txt) return;
+            const palette = {
+                ok:              { color: '#16a34a', label: 'Sentry: ok' },
+                degraded:        { color: '#eab308', label: 'Sentry: degraded' },
+                down:            { color: '#dc2626', label: 'Sentry: down' },
+                not_configured:  { color: '#666',    label: 'Sentry: not configured' },
+                unknown:         { color: '#666',    label: 'Sentry: checking' },
+            };
+            const p = palette[data.state] || palette.unknown;
+            dot.style.background = p.color;
+            txt.textContent = p.label;
+        }
+
+        function showBackendHealthModal() {
+            const el = document.getElementById('backend-health-details');
+            const modal = document.getElementById('backend-health-modal');
+            if (!lastBackendHealth) {
+                el.textContent = 'No data yet. Try again in a moment.';
+            } else {
+                const d = lastBackendHealth;
+                const lines = [
+                    `state                  : ${d.state}`,
+                    `consecutive_failures   : ${d.consecutive_failures}`,
+                    `last_success_seconds_ago: ${d.last_success_seconds_ago === null ? '-' : d.last_success_seconds_ago}`,
+                    `last_probe_seconds_ago : ${d.last_probe_seconds_ago === null ? '-' : d.last_probe_seconds_ago}`,
+                    `last_error             : ${d.last_error || '-'}`,
+                    `cache_ttl_seconds      : ${d.cache_ttl_seconds}`,
+                    `failure_threshold      : ${d.failure_threshold}`,
+                ];
+                el.textContent = lines.join('\n');
+            }
+            modal.style.display = 'flex';
+        }
+
+        pollBackendHealth();
+        setInterval(pollBackendHealth, 30000);
 
         // Link modal state
         let linkStep = 'order';

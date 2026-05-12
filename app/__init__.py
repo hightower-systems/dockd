@@ -137,6 +137,13 @@ def create_app(config_class=None):
     )
     app.scale_reader = scale
 
+    # Backend health monitor (v0.5.0). Cached on-demand probe: the
+    # first /api/health/backend poll after the cache TTL expires
+    # triggers a real backend.health() call; concurrent polls share
+    # the result. Read by the operator-UI connectivity dot.
+    from app.services.backend_health import BackendHealth
+    app.backend_health = BackendHealth(backend)
+
     # Register blueprints
     from app.blueprints.auth import auth_bp
     from app.blueprints.shipping import shipping_bp
@@ -171,6 +178,52 @@ def create_app(config_class=None):
             except Exception as exc:
                 logger.error("Boot-time retry of ship_attempts failed: %s", exc)
 
+    # Periodic in-process retry of unknown ship_attempts (v0.5.0).
+    # Complements boot-time retry: catches the case where a transient
+    # network blip recovers a few minutes after the ship and the
+    # process never restarts. Opt-in via the env knob (in seconds).
+    # Defaults to off; production deployments set
+    # DOCKD_RETRY_POLL_INTERVAL=300 (5 minutes) or similar.
+    retry_interval_s = int((os.environ.get('DOCKD_RETRY_POLL_INTERVAL') or '0').strip() or 0)
+    if retry_interval_s > 0 and backend is not None:
+        _start_periodic_retry(app, interval_seconds=retry_interval_s)
+
     logger.info("Dockd v%s initialized", config.VERSION)
 
     return app
+
+
+def _start_periodic_retry(app, *, interval_seconds: int):
+    """Daemon thread that drains pending/unknown ship_attempts rows.
+
+    Catches a transient network blip that clears up after the
+    original ship but before the next dockd restart. Idempotent by
+    construction: Sentry's dockd_idempotency replays the cached
+    response if the original committed.
+    """
+    import threading
+    log = logging.getLogger('dockd')
+
+    def _loop():
+        while True:
+            try:
+                # Each tick gets the latest ShippingService in case
+                # of a config reload that swapped backends.
+                results = app.shipping_service.retry_recoverable_attempts()
+                if results:
+                    log.info(
+                        "Periodic retry drained %d ship_attempts row(s)",
+                        len(results),
+                    )
+            except Exception as exc:
+                log.error("Periodic retry tick failed: %s", exc)
+            import time as _t
+            _t.sleep(interval_seconds)
+
+    t = threading.Thread(
+        target=_loop, name='dockd-periodic-retry', daemon=True,
+    )
+    t.start()
+    logging.getLogger('dockd').info(
+        "Periodic ship_attempts retry enabled (every %ds)", interval_seconds,
+    )

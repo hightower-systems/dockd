@@ -3,8 +3,8 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.4.0-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-153%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.5.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-179%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
   **[Releases](https://github.com/hightower-systems/dockd/releases)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
@@ -141,27 +141,32 @@ engine, printer service, and ShipRush client; no restart required.
 python -m pytest
 ```
 
-153 tests at v0.4.0 covering authentication + role gating, forced
+179 tests at v0.5.0 covering authentication + role gating, forced
 password-change flow, CarrierEngine determinations, label-cache behavior,
 settings store + user store CRUD, the settings blueprint surface, the
 SentryBackend HTTP client (every wire-level success + failure path),
 the backend-wired shipping routes (load / ship / manual-link / void),
-ShipAttemptsStore lifecycle (pending -> success / unknown / rejected,
-UNIQUE-key enforcement, recoverable scan, prune semantics), and the
-restart-time retry path for pending + unknown rows.
+ShipAttemptsStore lifecycle, the restart-time retry path for
+pending + unknown rows, BackendHealth state transitions + caching,
+the RedactionFilter (token scrub, bearer scrub, header scrub), and
+a cross-cutting security regression suite (no token leak in logs,
+TLS validation hardcoded, no scrypt hashes in responses,
+settings/users files chmod 600 after every write).
 
 ## Project Status
 
-**v0.4.0** -- Crash-recovery idempotency. Every backend write opens
-a row in `ship_attempts` BEFORE the network call; transitions to
-`success`, `unknown`, or `rejected` based on the outcome. On dockd
-restart (opt-in via `DOCKD_RETRY_PENDING_ON_BOOT=true`), pending /
-unknown rows are retried with the same UUID4 key -- Sentry's own
-idempotency table replays the cached response or re-executes,
-making retry always safe. The `ship_history` table also gains nine
-columns (external_id, customer_shipping_paid, order_total, the
-two Sentry IDs, manual_link, idempotency_key, voided_at,
-void_reason) so the full ship + void timeline lives in one row.
+**v0.5.0** -- Observability + security hardening. Operator UI gets
+a connectivity dot polling `/api/health/backend` every 30s (cached
+on the server so 5 stations produce 1 upstream call, not 5). The
+log pipeline gets a `RedactionFilter` that scrubs `wms_t_*` bearer
+tokens and `Authorization: Bearer` strings out of every record
+before format. An opt-in periodic-retry daemon
+(`DOCKD_RETRY_POLL_INTERVAL`) drains pending / unknown
+ship_attempts rows every N seconds so a transient network blip
+doesn't have to wait for a dockd restart. A top-level
+security-regression suite codifies the threat-model invariants
+(no token leak, TLS validation hardcoded, no scrypt hashes in
+responses, settings/users files always chmod 600).
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -169,7 +174,7 @@ void_reason) so the full ship + void timeline lives in one row.
 | **v0.2.0** | **Sentry backend wired -- `OrderBackend` Protocol + `SentryBackend` HTTP client against Sentry-WMS v1.9 dockd surface, ShippingService refactored, frontend so_number rename + dead-path cleanup** | ✅ Released |
 | **v0.3.0** | **Scale agent v2 + browser bootstrap -- agent binds 127.0.0.1, CORS pinned to dockd origin, /whoami endpoint, browser forwards X-Sentry-Token on every dockd call, print flow flips so dockd returns ZPL and the browser forwards to localhost agent, station_label persisted in shipping_history, docs/STATION_SETUP.md walkthrough** | ✅ Released |
 | **v0.4.0** | **Crash-recovery idempotency -- ship_attempts SQLite table with pending/success/unknown/rejected state machine wrapped around every backend write (ship / void / manual_link), opt-in restart-time retry of pending+unknown rows using the same UUID4 key, expanded ship_history with Sentry IDs + voided_at + idempotency_key cross-reference** | ✅ Released |
-| v0.5.0 | Health-check polling + connectivity indicator in the operator UI, log redaction (`wms_t_*` patterns, PII), periodic in-process retry of unknown rows | Planned |
+| **v0.5.0** | **Observability + security hardening -- backend health monitor + connectivity dot + admin details modal, RedactionFilter on every log handler (wms_t_*, Bearer, X-Sentry-Token), opt-in periodic in-process retry of unknown ship_attempts rows, security regression suite** | ✅ Released |
 | v1.0.0 | Production release -- full Sentry-WMS integration, integration tests against a real Sentry instance, migration playbook from `v0.x` deployments | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -182,4 +187,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.4.0
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.5.0

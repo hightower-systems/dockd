@@ -2,6 +2,112 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.5.0] - 2026-05-11
+
+"Observability + security hardening" release. The operator UI gets a
+connectivity dot polling a new `/api/health/backend` endpoint; the
+log pipeline gets a `RedactionFilter` that scrubs `wms_t_*` bearer
+tokens and `Authorization: Bearer` strings out of every record;
+ship_attempts gains an optional periodic-retry daemon so a
+transient network blip recovering minutes after the original ship
+doesn't have to wait for a dockd restart; and a top-level
+`tests/test_security_regressions.py` suite codifies the threat-
+model invariants that have to hold across every release.
+
+### Added -- Backend health monitor
+
+- **`app/services/backend_health.py`** -- `BackendHealth`
+  read-through-with-lock cache. The first
+  `/api/health/backend` poll after the cache TTL (30s default)
+  triggers a real `backend.health()` call; concurrent polls share
+  the result so five stations polling in parallel produce one
+  upstream call, not five. Five states:
+  - `ok` -- last probe succeeded within the TTL
+  - `degraded` -- 1 or 2 consecutive failures (within
+    `failure_threshold`)
+  - `down` -- failures >= `failure_threshold` (3 by default)
+  - `not_configured` -- no backend wired (`BACKEND` env empty)
+  - `unknown` -- no probe has run yet
+- **`GET /api/health/backend`** (login-required) returns the
+  snapshot: state, consecutive_failures, last_success_seconds_ago,
+  last_probe_seconds_ago, last_error, cache_ttl_seconds,
+  failure_threshold. Cheap to call; safe to poll every 30s from
+  every station.
+- **Sidebar connectivity dot** in `index.html`: 9px colored circle
+  next to the station label, polls every 30s, click for the
+  details modal showing the full state snapshot.
+
+### Added -- Log redaction
+
+- **`RedactionFilter`** in `app/logging_config.py`. Scrubs three
+  patterns from every record before the formatter sees it:
+  - `wms_t_[A-Za-z0-9_\-]{6,}` -> `wms_t_<REDACTED>`
+  - `Authorization: Bearer <value>` -> `Authorization: Bearer <REDACTED>` (case-insensitive)
+  - `X-Sentry-Token: <value>` / `X-WMS-Token: <value>` -> header
+    name kept, value replaced (case-insensitive)
+- Filter attached to both the console handler and the rotating
+  file handler so the stream-vs-file paths cannot drift.
+- Operates on the rendered message (post-format-arg
+  interpolation), so a `logger.info("Token=%s", secret)` call
+  scrubs the substituted value, not just the literal `%s`.
+
+### Added -- Periodic in-process retry
+
+- **Daemon thread** that runs
+  `ShippingService.retry_recoverable_attempts()` every
+  `DOCKD_RETRY_POLL_INTERVAL` seconds while dockd is up.
+  Defaults to **off** (interval 0); production deployments set
+  the env to 300 (5 minutes) or so. Complements the boot-time
+  retry from v0.4.0: covers the case where a transient network
+  blip recovers a few minutes after the original ship and the
+  process never restarts.
+- Marked `daemon=True` so a clean process exit doesn't hang on
+  the thread.
+- Each tick re-reads `app.shipping_service` so a future config
+  reload that swaps the backend would be picked up on the next
+  iteration without restart.
+
+### Added -- Security regression suite
+
+- **`tests/test_security_regressions.py`** (8 cross-cutting
+  tests) codifies the threat-model invariants:
+  1. `wms_t_*` tokens, bearer strings, and `X-Sentry-Token`
+     values never appear in log output after the RedactionFilter.
+  2. `SentryBackend.__init__` has no `verify` parameter and the
+     source contains exactly `verify=True` with no env-driven
+     escape hatch.
+  3. `GET /api/users` never returns the `password_hash` field;
+     no string starting with `scrypt:` lands in the response.
+  4. `GET /api/settings/secrets/presence` returns booleans only,
+     never actual values.
+  5. `settings.json` is `chmod 600` after a PATCH; `users.json`
+     is `chmod 600` after a password-set.
+  6. `SentryBackend` default timeout is finite and bounded
+     (0 < timeout <= 60).
+- The suite lives at the test root (`tests/`) so it shows up
+  separately from per-module unit tests in CI output.
+
+### Tests
+
+- 26 new tests:
+  - 9 `BackendHealth` (states, caching, recovery, exception
+    handling, route integration, auth gating)
+  - 9 `RedactionFilter` (scrub helper + filter wiring +
+    pass-through behavior)
+  - 8 cross-cutting security regressions
+- Total: 179 passing (153 -> 179).
+
+### Open
+
+- **Integration test against a real Sentry instance**
+  (`v1.0.0`).
+- **Token rotation UI** (admin-facing button in the Stations tab
+  to mark a station's token rotated). Deferred -- the rotation
+  itself happens on the Sentry side; dockd just gets the new
+  token in `agent_config.json`.
+- **Health-monitor history** for the admin (sparkline of
+  recent state transitions). Out of scope for v0.5.0.
+
 ## [v0.4.0] - 2026-05-11
 
 "Crash-recovery idempotency" release. Every backend write -- ship,
