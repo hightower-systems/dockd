@@ -178,3 +178,47 @@ class TestSecretsAPI:
     def test_secrets_rejects_unknown_keys(self, admin_client):
         resp = admin_client.post('/api/settings/secrets', json={'NOT_A_KEY': 'x'})
         assert resp.status_code == 400
+
+
+class TestDynamicRowEditPreservation:
+    """v0.6.2: clicking "+ Add box" (or station, or fedex box) used to
+    re-render the table from `settings.*` and wipe any in-progress
+    edits the user had typed into existing rows. The fix calls the
+    matching read*Table() before mutating the array. Same pattern
+    applied to the per-row remove buttons.
+    """
+
+    def _settings_body(self, admin_client):
+        resp = admin_client.get('/settings')
+        assert resp.status_code == 200
+        return resp.data.decode('utf-8')
+
+    def _slice(self, body, fn_name):
+        start = body.find('function ' + fn_name + '(')
+        assert start >= 0, fn_name + ' not found in settings.html'
+        end = body.find('function ', start + 10)
+        return body[start:end]
+
+    def test_add_box_row_reads_before_render(self, admin_client):
+        block = self._slice(self._settings_body(admin_client), 'addBoxRow')
+        assert 'readBoxesTable()' in block
+        assert block.index('readBoxesTable()') < block.index('settings.boxes.push')
+
+    def test_add_fedex_row_reads_before_render(self, admin_client):
+        block = self._slice(self._settings_body(admin_client), 'addFedexRow')
+        assert 'readFedexTable()' in block
+        assert block.index('readFedexTable()') < block.index('settings.fedex_boxes.push')
+
+    def test_add_station_row_reads_before_render(self, admin_client):
+        block = self._slice(self._settings_body(admin_client), 'addStationRow')
+        assert 'readStationsTable()' in block
+        assert block.index('readStationsTable()') < block.index('settings.stations.push')
+
+    def test_remove_handlers_read_before_splice(self, admin_client):
+        body = self._settings_body(admin_client)
+        # The inline remove handler for boxes/fedex/stations must read
+        # the table before splicing. We assert the read call appears
+        # immediately before each splice in the template.
+        assert 'readBoxesTable(); settings.boxes.splice' in body
+        assert 'readFedexTable(); settings.fedex_boxes.splice' in body
+        assert 'readStationsTable(); settings.stations.splice' in body

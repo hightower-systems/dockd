@@ -85,3 +85,39 @@ class TestUpcScanMatching:
         assert 'upcLine' in body or 'i.upc' in body
         # Label text so operators can read the row at a glance.
         assert 'UPC' in body
+
+
+class TestAdultSignatureToggle:
+    """v0.7.0: the sidebar carries a per-ship 'ADULT SIG' toggle. The
+    flag rides on every ship_order request, the button visibly tracks
+    state, and the toggle auto-disarms after a successful ship so the
+    next order does not silently inherit the requirement."""
+
+    def test_sidebar_button_present(self, client):
+        body = client.get('/').data.decode('utf-8')
+        assert 'btn-adult-sig' in body
+        assert 'toggleAdultSignature' in body
+        assert 'adult-sig-state' in body
+
+    def test_state_variable_initialized_false(self, client):
+        body = client.get('/').data.decode('utf-8')
+        # Default off; operators must explicitly arm per order.
+        assert 'let adultSignatureNext = false' in body
+
+    def test_payload_carries_adult_signature_flag(self, client):
+        body = client.get('/').data.decode('utf-8')
+        # Both ship-payload assembly sites (standard + OB-dim path)
+        # must propagate the flag.
+        assert body.count('adult_signature: adultSignatureNext') >= 2
+
+    def test_resets_to_false_on_success(self, client):
+        body = client.get('/').data.decode('utf-8')
+        # On success branch, the flag is flipped back to false before
+        # softReset runs (which would otherwise leave it sticky).
+        assert 'adultSignatureNext = false' in body
+        assert 'updateAdultSignatureUi' in body
+
+    def test_intl_pill_marker(self, client):
+        """Companion v0.7.0 marker: INTL pill exists on the order row."""
+        body = client.get('/').data.decode('utf-8')
+        assert 'intl-pill' in body

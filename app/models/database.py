@@ -77,7 +77,11 @@ def init_ship_db():
             manual_link INTEGER DEFAULT 0,
             idempotency_key TEXT,
             voided_at TEXT,
-            void_reason TEXT
+            void_reason TEXT,
+            destination_country TEXT,
+            customs_value REAL,
+            customs_currency TEXT,
+            hs_codes TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ship_history_order
             ON ship_history(order_number);
@@ -100,6 +104,10 @@ def init_ship_db():
         ("idempotency_key",       "ALTER TABLE ship_history ADD COLUMN idempotency_key TEXT"),
         ("voided_at",             "ALTER TABLE ship_history ADD COLUMN voided_at TEXT"),
         ("void_reason",           "ALTER TABLE ship_history ADD COLUMN void_reason TEXT"),
+        ("destination_country",   "ALTER TABLE ship_history ADD COLUMN destination_country TEXT"),
+        ("customs_value",         "ALTER TABLE ship_history ADD COLUMN customs_value REAL"),
+        ("customs_currency",      "ALTER TABLE ship_history ADD COLUMN customs_currency TEXT"),
+        ("hs_codes",              "ALTER TABLE ship_history ADD COLUMN hs_codes TEXT"),
     ):
         if col not in existing:
             conn.execute(ddl)

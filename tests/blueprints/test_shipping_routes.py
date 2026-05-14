@@ -217,6 +217,61 @@ class TestShipOrderWithBackend:
         mock_backend.get_order.assert_not_called()
 
 
+class TestBannedDestinationGate:
+    """v0.7.0: a destination on the SettingsStore banned-country list
+    must be rejected before any ShipRush or printer work. The seeded
+    OFAC defaults are CU / IR / KP / SY."""
+
+    def _order_to(self, country):
+        return OrderData(
+            so_number='SO-INTL', external_id='ext-banned',
+            status='PACKED', warehouse_id=1, shippable=True,
+            shippable_from_statuses=['PACKED'],
+            items=[OrderItem(external_id='1', sku='X', display_name='X',
+                             upc=None, qty=1)],
+            shipping_address=ShippingAddress(
+                name='Recipient', line1='1 Foreign Way',
+                city='Pyongyang', state='', postal_code='00000',
+                country=country, phone='000-000-0000',
+            ),
+            customer_name='Recipient', customer_phone='000',
+            ship_method='UPS Worldwide Saver',
+            order_total=10.0, customer_shipping_paid=0.0,
+        )
+
+    def test_banned_destination_blocks_before_shiprush(
+            self, auth_client, mock_backend, mock_shiprush):
+        mock_backend.get_order.return_value = self._order_to('KP')
+        resp = auth_client.post('/ship_order', json={
+            'so_number': 'SO-INTL',
+            'box_id': '1',
+            'weight': 1.0,
+        })
+        data = resp.get_json()
+        assert data['status'] == 'error'
+        assert 'banned' in data['message'].lower() or 'block' in data['message'].lower()
+        mock_shiprush.generate_label.assert_not_called()
+        mock_backend.confirm_shipped.assert_not_called()
+
+    def test_allowed_destination_does_not_trigger_gate(
+            self, auth_client, mock_backend, mock_shiprush):
+        # Canada is not on the OFAC seed list; ship flow proceeds.
+        mock_backend.get_order.return_value = self._order_to('CA')
+        mock_backend.confirm_shipped.return_value = ShipResult(
+            status='SHIPPED', tracking='1Z999AA10123456784',
+            shipped_at='2026-05-11T15:30:00Z',
+            fulfillment_id=44, audit_log_id=9003,
+        )
+        resp = auth_client.post('/ship_order', json={
+            'so_number': 'SO-INTL',
+            'box_id': '1',
+            'weight': 1.0,
+        })
+        data = resp.get_json()
+        assert data['status'] == 'success'
+        assert mock_shiprush.generate_label.called
+
+
 class TestManualLinkWithBackend:
 
     def test_manual_link_happy_path(self, auth_client, mock_backend):

@@ -3,8 +3,8 @@
 
   <p><em>Open-source shipping station orchestrator for warehouse pack lines</em></p>
 
-  ![Version](https://img.shields.io/badge/version-0.6.1-8e2716)
-  ![Tests](https://img.shields.io/badge/tests-191%20passing-34a853)
+  ![Version](https://img.shields.io/badge/version-0.7.0-8e2716)
+  ![Tests](https://img.shields.io/badge/tests-245%20passing-34a853)
   ![License](https://img.shields.io/badge/license-Apache_2.0-blue)
 
   **[Releases](https://github.com/hightower-systems/dockd/releases)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
@@ -141,7 +141,7 @@ engine, printer service, and ShipRush client; no restart required.
 python -m pytest
 ```
 
-188 tests at v0.6.0 covering authentication + role gating, forced
+245 tests at v0.7.0 covering authentication + role gating, forced
 password-change flow, CarrierEngine determinations, label-cache behavior,
 settings store + user store CRUD, the settings blueprint surface, the
 SentryBackend HTTP client (every wire-level success + failure path),
@@ -150,24 +150,37 @@ ShipAttemptsStore lifecycle, the restart-time retry path for
 pending + unknown rows, BackendHealth state transitions + caching,
 the RedactionFilter (token scrub, bearer scrub, header scrub),
 ShipRush `_resolve_carrier` fallback (no `None` returns under empty
-settings), index-template admin-only markup, and a cross-cutting
-security regression suite (no token leak in logs, TLS validation
-hardcoded, no scrypt hashes in responses, settings/users files
-chmod 600 after every write).
+settings), index-template admin-only markup, the dynamic-row Settings
+UI edit-preservation fix, the international shipping path
+(CustomsData parsing, country normalization, banned-country gate,
+ShipRush XML commodities + CustomsValue + IncotermsCode emission,
+XML injection escaping, international tracking-number prefix
+inference, adult-signature DCISType emission across all three
+carriers), and a cross-cutting security regression suite (no token
+leak in logs, TLS validation hardcoded, no scrypt hashes in
+responses, settings/users files chmod 600 after every write, no
+shipper-tax-id leakage through the non-admin public-settings
+endpoint).
 
 ## Project Status
 
-**v0.6.0** -- First end-to-end ship against a real Sentry. A live
-integration test against a fresh Sentry-WMS v1.10.1 deployment + a
-real ShipRush account walked SO-2026-001 from PACKED -> SHIPPED ->
-PACKED (real USPS label generated, then voided). Two bugs surfaced
-and got fixes: `ShipRushClient._resolve_carrier` no longer returns
-`None` under empty `shiprush_services` settings, and the sidebar
-SETTINGS + EXIT buttons now appear after JS-driven login without a
-page reload (was previously gated by a server-render Jinja
-conditional that ran before the session attached). Test isolation
-also strengthened so a populated dev `.env` does not leak
-`BACKEND=sentry` into pytest's app fixture.
+**v0.7.0** -- International shipping, dockd side. Destination
+country flows from Sentry through to ShipRush (no more hardcoded
+`<Country>US</Country>`); a `<Commodities>` block + `<CustomsValue>`
++ `<IncotermsCode>` are emitted for non-US labels. A banned-
+destination hard gate (seeded with OFAC defaults CU/IR/KP/SY) runs
+server-side before any carrier call, so a sanctioned consignee
+cannot get a label even if the operator UI is bypassed. A new
+admin-only Settings tab exposes the banned list + shipper tax IDs
+(EIN/EORI/IOSS/UK VAT). A per-ship "Adult Signature" sidebar
+toggle emits the carrier-correct `<DCISType>` (UPS/USPS `ADS`,
+FedEx `F4`) for the next ship and auto-disarms on success.
+`ship_history` gains `destination_country`, `customs_value`,
+`customs_currency`, `hs_codes` columns. Frontend gets an `INTL`
+pill on intl orders. Dockd is wire-ready for Sentry's v1.11
+item-master extension (`hs_code`, `country_of_origin`,
+`unit_weight_oz`, `unit_value`); until that ships, intl orders
+should be handled via the manual-link path.
 
 | Version | Milestone | Status |
 |---------|-----------|--------|
@@ -177,6 +190,8 @@ also strengthened so a populated dev `.env` does not leak
 | **v0.4.0** | **Crash-recovery idempotency -- ship_attempts SQLite table with pending/success/unknown/rejected state machine wrapped around every backend write (ship / void / manual_link), opt-in restart-time retry of pending+unknown rows using the same UUID4 key, expanded ship_history with Sentry IDs + voided_at + idempotency_key cross-reference** | ✅ Released |
 | **v0.5.0** | **Observability + security hardening -- backend health monitor + connectivity dot + admin details modal, RedactionFilter on every log handler (wms_t_*, Bearer, X-Sentry-Token), opt-in periodic in-process retry of unknown ship_attempts rows, security regression suite** | ✅ Released |
 | **v0.6.0** | **First end-to-end ship against a real Sentry-WMS + real ShipRush -- bug fixes from the integration test (ShipRush `_resolve_carrier` fallback under empty settings; sidebar admin buttons visible after JS login without page reload), conftest env-isolation so dev `.env` does not bleed into the test suite** | ✅ Released |
+| **v0.7.0** | **International shipping (dockd side) -- destination country passthrough, ShipRush `<Commodities>` + `<CustomsValue>` + `<IncotermsCode>` emission, banned-destination hard gate (OFAC defaults), per-ship adult-signature toggle for all three carriers (`DCISType` ADS/F4), Settings International tab, INTL pill in operator UI, `ship_history` schema extension, Settings UI dynamic-row edit-preservation fix** | ✅ Released |
+| v0.8.0 | International phase 2 -- CN22 / CN23 customs forms, commercial invoice PDFs, DDP/DDU per-order toggle, metric weight thresholds | Planned |
 | v1.0.0 | Production release -- scripted integration test against a real Sentry instance, migration playbook from `v0.x` deployments | Planned |
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
@@ -189,4 +204,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Apache License 2.0 -- see [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
 
-Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.6.1
+Built by [Hightower Systems L.L.C.](https://github.com/hightower-systems) · v0.7.0

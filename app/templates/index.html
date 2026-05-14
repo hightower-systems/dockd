@@ -426,6 +426,7 @@
                 <button type="button" class="sidebar-btn" onclick="openReprintModal()">REPRINT</button>
                 <button type="button" class="sidebar-btn" id="btn-reprint-last" onclick="reprintLast()" style="opacity:0.4; pointer-events:none;">REPRINT LAST</button>
                 <button type="button" class="sidebar-btn" id="btn-change-carrier" onclick="openChangeCarrierModal()" style="opacity:0.4; pointer-events:none;">CHANGE SHIP</button>
+                <button type="button" class="sidebar-btn" id="btn-adult-sig" onclick="toggleAdultSignature()" title="Require adult signature on the next label only">ADULT SIG: <span id="adult-sig-state">OFF</span></button>
             </div>
         </nav>
         <div id="ship-count-display" class="ship-count-bubble" style="display:none;">
@@ -463,7 +464,7 @@
                     <h2>Items to Pack</h2>
                     <div class="order-info-box" style="display: flex; gap: 32px;">
                         <div style="flex: 1;">
-                            <p><strong>Order:</strong> <span id="order-id-display">Waiting for scan...</span></p>
+                            <p><strong>Order:</strong> <span id="order-id-display">Waiting for scan...</span> <span id="intl-pill" style="display:none; background:#8e2716; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:700; margin-left:8px;">INTL</span></p>
                             <p><strong>Customer:</strong> <span id="cust-name">Waiting for scan...</span></p>
                             <p><strong>Phone:</strong> <span id="cust-phone">Waiting for scan...</span></p>
                             <p><strong>Address:</strong> <span id="cust-addr">Waiting for scan...</span></p>
@@ -518,6 +519,11 @@
         let orderLoadedAt = null;
         let currentFfCreatedAt = '';
         let manualCarrierOverride = null;
+        // Per-ship adult-signature toggle (v0.7.0). Resets to false on
+        // ship success so a one-time signature requirement on order N
+        // does not silently follow into order N+1. Operators must
+        // explicitly re-arm the toggle for each order that needs it.
+        let adultSignatureNext = false;
         const overrideExceptions = new Set({{ override_exceptions | tojson }});
 
         // Runtime settings fetched from /api/settings/public on page load.
@@ -947,7 +953,16 @@
                     let fullAddr = '';
                     if (addr.addr1) fullAddr = `${addr.addr1}, ${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`;
                     else fullAddr = `${addr.city || ''}, ${addr.state || ''} ${addr.zip || ''}`.trim();
+                    // International suffix: when destination is non-US,
+                    // append the ISO country code so the operator can see
+                    // it at a glance. The INTL pill in the header is the
+                    // primary indicator; address suffix is the receipt.
+                    const country = (addr.country || 'US').toString().toUpperCase().slice(0, 2);
+                    const isIntl = country && country !== 'US';
+                    if (isIntl) fullAddr = `${fullAddr} (${country})`;
                     document.getElementById('cust-addr').innerText = fullAddr || 'Address not available';
+                    const intlPill = document.getElementById('intl-pill');
+                    if (intlPill) intlPill.style.display = isIntl ? 'inline-block' : 'none';
                     const shipMethod = (data.ship_method || 'Best Way').toString().trim();
                     document.getElementById('ship-via').innerText = shipMethod;
                     currentOrderTotal = parseFloat(data.order_total) || 0;
@@ -1054,7 +1069,7 @@
                     document.getElementById('weight-val').innerText = finalWeight;
                     document.getElementById('scale-section').classList.add('weight-captured');
                     log(`Generating Label (${boxId} @ ${finalWeight} lbs)...`);
-                    pendingShipPayload = { so_number: currentSoNumber, box_id: boxId, weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, order_loaded_at: orderLoadedAt, ff_created_at: currentFfCreatedAt };
+                    pendingShipPayload = { so_number: currentSoNumber, box_id: boxId, weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, order_loaded_at: orderLoadedAt, ff_created_at: currentFfCreatedAt, adult_signature: adultSignatureNext };
                     if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
                     else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
                     else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
@@ -1081,6 +1096,13 @@
                     lastShippedOrderId = currentOrderId;
                     document.getElementById('btn-reprint-last').style.opacity = '1';
                     document.getElementById('btn-reprint-last').style.pointerEvents = 'auto';
+                    // Auto-disarm the adult-signature toggle so the
+                    // next order does not inherit the previous order's
+                    // one-time requirement.
+                    if (adultSignatureNext) {
+                        adultSignatureNext = false;
+                        updateAdultSignatureUi();
+                    }
                     // Forward the ZPL bytes to the local scale agent for
                     // printing. The dockd container has no printer; the
                     // browser is the bridge.
@@ -1240,7 +1262,7 @@
                     document.getElementById('weight-val').innerText = finalWeight;
                     document.getElementById('scale-section').classList.add('weight-captured');
                     log(`Generating Label (OB ${l}x${w}x${h} @ ${finalWeight} lbs)...`);
-                    pendingShipPayload = { so_number: currentSoNumber, box_id: 'OB', weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, ob_dims: {l: l, w: w, h: h} };
+                    pendingShipPayload = { so_number: currentSoNumber, box_id: 'OB', weight: finalWeight, order_number: currentOrderId, station: STATION_ID, ca_shipping_paid: currentCaShippingPaid, ob_dims: {l: l, w: w, h: h}, adult_signature: adultSignatureNext };
                     if (manualCarrierOverride) pendingShipPayload.carrier_override = manualCarrierOverride;
                     else if (amazonCarrierOverride) pendingShipPayload.carrier_override = amazonCarrierOverride;
                     else if (highValueCarrierOverride) pendingShipPayload.carrier_override = highValueCarrierOverride;
@@ -1279,6 +1301,30 @@
             else { isFedExMode = false; resetBoxUI(); if (checkCompletion()) unlockBoxUI(); }
             log(`Manual carrier change: ${label}`);
             document.getElementById('main-input').focus();
+        }
+
+        function toggleAdultSignature() {
+            adultSignatureNext = !adultSignatureNext;
+            updateAdultSignatureUi();
+        }
+
+        function updateAdultSignatureUi() {
+            const btn = document.getElementById('btn-adult-sig');
+            const state = document.getElementById('adult-sig-state');
+            if (!btn || !state) return;
+            state.innerText = adultSignatureNext ? 'ON' : 'OFF';
+            // Visual highlight when armed: red accent + bold, so the
+            // operator cannot miss that the NEXT ship will carry the
+            // extra-cost signature requirement.
+            if (adultSignatureNext) {
+                btn.style.background = '#8e2716';
+                btn.style.color = '#fff';
+                btn.style.fontWeight = '800';
+            } else {
+                btn.style.background = '';
+                btn.style.color = '';
+                btn.style.fontWeight = '';
+            }
         }
 
         function softReset() {

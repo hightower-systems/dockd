@@ -75,6 +75,7 @@ def ship_order():
         ff_created_at=data.get('ff_created_at', ''),
         station_id=data.get('station_id'),
         station_label=data.get('station_label'),
+        adult_signature=bool(data.get('adult_signature')),
     )
     return jsonify(result)
 

@@ -15,7 +15,7 @@ import json
 import os
 import logging
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.services.default_settings import DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION
 
@@ -84,9 +84,11 @@ class SettingsStore:
 
         Excludes anything the operator UI doesn't need: account GUIDs,
         carrier-method IDs, override SKUs (those load via a separate
-        guarded path), and station IPs.
+        guarded path), station IPs, and the international tax-ID
+        block (EIN / EORI / IOSS / UK VAT are admin-only).
         """
         data = self._load()
+        intl = data.get("international") or {}
         return {
             "high_value_threshold": data.get("high_value_threshold"),
             "amazon_methods": data.get("amazon_methods", []),
@@ -94,7 +96,30 @@ class SettingsStore:
                 {"id": b["id"], "label": b.get("label", b["id"])}
                 for b in data.get("boxes", [])
             ],
+            # Only the booleans the operator UI needs to render an
+            # intl pill or block a scan are exposed; tax IDs and the
+            # banned-country list are admin-only.
+            "international_enabled": bool(intl.get("enabled", False)),
         }
+
+    def is_country_banned(self, country: Optional[str]) -> bool:
+        """Return True if `country` is on the banned-destination list.
+
+        Used by ShippingService as a hard pre-label-call gate. The
+        list is seeded with OFAC comprehensive-sanctions defaults
+        (CU/IR/KP/SY) and tunable by admins via the Settings UI.
+        Country is normalized to uppercase ISO 3166 alpha-2 before
+        comparison; empty / None always returns False (a missing
+        country code is treated as US-domestic upstream).
+        """
+        if not country:
+            return False
+        normalized = str(country).strip().upper()[:2]
+        if not normalized:
+            return False
+        intl = self._load().get("international") or {}
+        banned = intl.get("banned_countries") or []
+        return normalized in {str(c).strip().upper()[:2] for c in banned if c}
 
     def replace(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
         """Overwrite settings wholesale. Merges with defaults to preserve

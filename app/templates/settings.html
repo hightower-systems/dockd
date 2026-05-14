@@ -126,6 +126,7 @@
         <button data-pane="shiprush">ShipRush</button>
         <button data-pane="amazon">Amazon methods</button>
         <button data-pane="overrides">Override SKUs</button>
+        <button data-pane="international">International</button>
         <button data-pane="users">Users</button>
         <button data-pane="secrets">Secrets (.env)</button>
     </nav>
@@ -344,6 +345,53 @@
             </div>
         </section>
 
+        <!-- INTERNATIONAL -->
+        <section id="pane-international" class="tab-pane">
+            <div class="card">
+                <h2>International shipping</h2>
+                <p class="help">When enabled, orders with a non-US destination route through the customs path: dockd adds a <code>Commodities</code> block + <code>CustomsValue</code> to the ShipRush XML. Per-item HS codes, country of origin, unit weight, and unit value must be populated on the Sentry item master for the labels to clear ShipRush submission.</p>
+                <div class="row">
+                    <div class="field">
+                        <label>Enable international shipping</label>
+                        <select id="intl-enabled">
+                            <option value="false">Disabled (US only)</option>
+                            <option value="true">Enabled</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Default duty payer (Incoterms)</label>
+                        <select id="intl-duty-payer">
+                            <option value="recipient">Recipient (DAP / DDU)</option>
+                            <option value="sender">Sender (DDP)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Shipper tax IDs</h2>
+                <p class="help">Required by certain destination customs authorities. Leave blank if not registered. <strong>Admin-only;</strong> these are not exposed to non-admin sessions or the public settings endpoint.</p>
+                <div class="row">
+                    <div class="field"><label>EIN (US Employer ID)</label><input id="intl-ein" type="text" autocomplete="off" /></div>
+                    <div class="field"><label>EORI (EU)</label><input id="intl-eori" type="text" autocomplete="off" /></div>
+                    <div class="field"><label>IOSS (EU low-value)</label><input id="intl-ioss" type="text" autocomplete="off" /></div>
+                    <div class="field"><label>UK VAT (under GBP 135)</label><input id="intl-vat-uk" type="text" autocomplete="off" /></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Banned destinations</h2>
+                <p class="help">Hard-block list. A ship attempt to any country here is rejected by dockd before any ShipRush call. ISO 3166 alpha-2 codes, comma-separated. The OFAC comprehensive-sanctions defaults (CU, IR, KP, SY) are seeded on first boot; tune for your compliance posture. <strong>Operators cannot override this from the pack screen.</strong></p>
+                <div class="row">
+                    <div class="field" style="flex: 1;">
+                        <label>Banned country codes</label>
+                        <input id="intl-banned" type="text" placeholder="CU, IR, KP, SY" />
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <button class="primary" onclick="saveInternational()">Save international settings</button>
+            </div>
+        </section>
+
         <!-- USERS -->
         <section id="pane-users" class="tab-pane">
             <div class="card">
@@ -455,7 +503,7 @@
                     sel.value = b.preference || 'USPS';
                     return sel;
                 })()),
-                el('td', {}, el('button', { class: 'danger', onclick: () => { settings.boxes.splice(i, 1); renderBoxes(); } }, 'remove')),
+                el('td', {}, el('button', { class: 'danger', onclick: () => { readBoxesTable(); settings.boxes.splice(i, 1); renderBoxes(); } }, 'remove')),
             );
             return tr;
         }
@@ -468,6 +516,7 @@
             });
         }
         function addBoxRow() {
+            readBoxesTable();
             settings.boxes.push({ id: '', label: '', l: 0, w: 0, h: 0, preference: 'USPS' });
             renderBoxes();
         }
@@ -487,7 +536,7 @@
                 el('td', {}, el('input', { type: 'number', step: '0.1', value: b.w, 'data-i': i, 'data-k': 'w', 'data-tbl': 'fedex' })),
                 el('td', {}, el('input', { type: 'number', step: '0.1', value: b.h, 'data-i': i, 'data-k': 'h', 'data-tbl': 'fedex' })),
                 el('td', {}, el('input', { type: 'text', value: b.type || '', 'data-i': i, 'data-k': 'type', 'data-tbl': 'fedex' })),
-                el('td', {}, el('button', { class: 'danger', onclick: () => { settings.fedex_boxes.splice(i, 1); renderFedex(); } }, 'remove')),
+                el('td', {}, el('button', { class: 'danger', onclick: () => { readFedexTable(); settings.fedex_boxes.splice(i, 1); renderFedex(); } }, 'remove')),
             );
             return tr;
         }
@@ -502,6 +551,7 @@
                 .split(',').map(s => s.trim()).filter(Boolean);
         }
         function addFedexRow() {
+            readFedexTable();
             settings.fedex_boxes.push({ id: '', label: '', l: 0, w: 0, h: 0, type: '' });
             renderFedex();
         }
@@ -577,7 +627,7 @@
                     el('td', {}, el('input', { type: 'text', value: s.host || '', 'data-i': i, 'data-k': 'host' })),
                     el('td', {}, el('input', { type: 'number', value: s.port || 5050, 'data-i': i, 'data-k': 'port' })),
                     el('td', {}, el('input', { type: 'checkbox', checked: !!s.local, 'data-i': i, 'data-k': 'local' })),
-                    el('td', {}, el('button', { class: 'danger', onclick: () => { settings.stations.splice(i, 1); renderStations(); } }, 'remove')),
+                    el('td', {}, el('button', { class: 'danger', onclick: () => { readStationsTable(); settings.stations.splice(i, 1); renderStations(); } }, 'remove')),
                 );
                 tbody.append(tr);
             });
@@ -595,6 +645,7 @@
             settings.default_station_id = document.getElementById('default-station').value;
         }
         function addStationRow() {
+            readStationsTable();
             settings.stations.push({ id: '', label: '', host: '127.0.0.1', port: 5050, local: false });
             renderStations();
         }
@@ -747,6 +798,49 @@
                     .split('\n').map(s => s.trim()).filter(Boolean);
                 await patchSettings({ amazon_methods: lines });
                 showStatus('Amazon methods saved');
+            } catch (e) { showStatus(e.message, true); }
+        }
+
+        // -------- international --------
+        function renderInternational() {
+            const intl = settings.international || {};
+            const taxIds = intl.shipper_tax_ids || {};
+            document.getElementById('intl-enabled').value = intl.enabled ? 'true' : 'false';
+            document.getElementById('intl-duty-payer').value =
+                (intl.default_duty_payer === 'sender') ? 'sender' : 'recipient';
+            document.getElementById('intl-ein').value = taxIds.ein || '';
+            document.getElementById('intl-eori').value = taxIds.eori || '';
+            document.getElementById('intl-ioss').value = taxIds.ioss || '';
+            document.getElementById('intl-vat-uk').value = taxIds.vat_uk || '';
+            document.getElementById('intl-banned').value = (intl.banned_countries || []).join(', ');
+        }
+        async function saveInternational() {
+            try {
+                // Parse banned-country list: comma-separated, uppercase
+                // 2-letter codes, dedupe. Invalid entries silently dropped
+                // so a typo doesn't accidentally lock down a region.
+                const bannedRaw = document.getElementById('intl-banned').value || '';
+                const banned = [...new Set(
+                    bannedRaw.split(',')
+                        .map(s => s.trim().toUpperCase().slice(0, 2))
+                        .filter(s => /^[A-Z]{2}$/.test(s))
+                )];
+                const payload = {
+                    international: {
+                        enabled: document.getElementById('intl-enabled').value === 'true',
+                        default_duty_payer: document.getElementById('intl-duty-payer').value,
+                        shipper_tax_ids: {
+                            ein: document.getElementById('intl-ein').value.trim(),
+                            eori: document.getElementById('intl-eori').value.trim(),
+                            ioss: document.getElementById('intl-ioss').value.trim(),
+                            vat_uk: document.getElementById('intl-vat-uk').value.trim(),
+                        },
+                        banned_countries: banned,
+                    },
+                };
+                await patchSettings(payload);
+                settings.international = payload.international;
+                showStatus('International settings saved');
             } catch (e) { showStatus(e.message, true); }
         }
 
@@ -931,7 +1025,7 @@
                 settings = await getJSON('/api/settings');
                 renderBoxes(); renderFedex(); renderCarrier(); renderStations();
                 renderOrigin(); renderShipRush(); renderAmazon(); renderOverrides();
-                renderUsers(); renderSecrets();
+                renderInternational(); renderUsers(); renderSecrets();
             } catch (e) {
                 showStatus('Load failed: ' + e.message, true);
             }

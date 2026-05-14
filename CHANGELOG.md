@@ -2,6 +2,252 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v0.7.0] - 2026-05-14
+
+"International shipping, dockd side" release. Dockd v0.6.x assumed
+every destination was a US ZIP and hardcoded `<Country>US</Country>`
+in the ShipRush XML; this release plumbs destination country through
+end to end, builds the customs declaration block ShipRush requires
+for non-US labels, gates banned destinations before any carrier
+call, and adds a per-ship adult-signature toggle that works for all
+three carriers. The complementary catalog work (HS codes, country
+of origin, unit weight, unit value on the Sentry item master) is a
+v1.11 Sentry release and is tracked separately; dockd is ready to
+consume that data the moment Sentry surfaces it.
+
+### Added -- International ship path
+
+- **`CustomsData` dataclass** (`app/services/backend/__init__.py`).
+  Frozen, all-optional fields: `description`, `hs_code`,
+  `country_of_origin`, `unit_weight_oz`, `unit_value`. From-dict
+  tolerantly normalizes (uppercase ISO 3166 alpha-2 country,
+  numerics coerced or dropped on garbage, negatives dropped). Sentry
+  emits this nested under each `OrderItem` only when the destination
+  is non-US so domestic payloads stay byte-for-byte unchanged.
+- **`OrderItem.customs: Optional[CustomsData]`** carries the per-line
+  declaration. **`OrderData.currency`** (default `"USD"`, normalized
+  to 3-letter uppercase ISO 4217) and **`OrderData.duties_paid_by`**
+  (`"sender"` / `"recipient"`, default `None`) cover order-level
+  customs context.
+- **ShipRush XML: country passthrough.** `<DeliveryAddress><Country>`
+  now reads from the order's address (previously hardcoded `US`).
+  Helper `_normalize_country` is the single source of truth so the
+  banned-country gate and the XML emit logic cannot drift.
+- **ShipRush XML: `<Commodities>` block.** Emitted only when the
+  destination is non-US. One `<Commodity>` per line item with
+  `<Description>`, `<HarmonizedCode>`, `<CountryOfManufacture>`,
+  `<Quantity>`, `<UnitWeight>` (ounces converted to pounds, the
+  ShipRush convention), and `<UnitValue><Amount><Currency>`. Every
+  upstream-supplied string is `xml.sax.saxutils.escape`d; numerics
+  are formatted via `:f` so a malformed `qty` cannot break out of
+  its tag.
+- **ShipRush XML: customs envelope.** `<CustomsValue>` sums the
+  per-line declared values. `<IncotermsCode>` resolves from
+  `duties_paid_by`: `"sender"` -> `DDP` (sender pays duty),
+  anything else -> `DAP` (recipient pays, the more common default).
+  `<ContentType>Merchandise</ContentType>` emitted alongside.
+- **Service catalog ready for international slots.** No code change
+  needed to add `UPS_WORLDWIDE_SAVER`, `FEDEX_INTL_PRIORITY`,
+  `USPS_PRIORITY_INTL`, etc.; admins paste them into the existing
+  ShipRush services table in Settings, and `_resolve_carrier` picks
+  them up via substring match on the order's ship-method string or
+  via the operator carrier override.
+
+### Added -- Banned-destination hard gate
+
+- **`SettingsStore.is_country_banned(country)`** with case- and
+  whitespace-tolerant normalization. Compares against
+  `settings.international.banned_countries`, seeded on first boot
+  with the OFAC comprehensive-sanctions defaults (`CU`, `IR`, `KP`,
+  `SY`). Admins tune the list through the new Settings tab.
+- **`ShippingService.ship_order` blocks the banned destination
+  before any carrier or label work.** Runs immediately after
+  `backend.get_order`; if the gate fires, ShipRush is never called,
+  no ZPL is generated, no `ship_attempts` row is written, and the
+  operator gets a compliance-flavored error message pointing them
+  at the Settings tab. Server-side enforcement is the source of
+  truth; the operator UI carries no override path.
+- **Logging:** the block writes a `WARNING` line tagged with SO
+  number + country code for audit-trail purposes (no PII / no token
+  material in the line, redaction-filter-safe).
+
+### Added -- Per-ship adult-signature toggle
+
+- **Sidebar button** in `app/templates/index.html` (left rail,
+  alongside CLEAR / VOID / LINK / REPRINT). Toggles `ADULT SIG: ON`
+  / `OFF`; when armed the button paints red with bold white text
+  so the operator cannot miss the upcharge state.
+- **Wire shape.** Boolean rides on `/ship_order` request body as
+  `adult_signature`. Frontend includes it in both ship-payload
+  assembly sites (standard ship + OB-dim ship). `ShipRushClient.
+  generate_label` accepts `adult_signature=False` kwarg and emits
+  the carrier-correct `<DCISType>` inside `<Package>`:
+  - **FedEx orders (account_key `FEDEX`) -> `F4`** (per ShipRush
+    XSD `TDCIS` enum, "Adult Signature Required" on FedEx).
+  - **UPS and USPS orders -> `ADS`** (same enum, the carrier-
+    agnostic adult-signature value).
+- **Auto-disarms on ship success** before the success modal
+  renders, so order N+1 starts at OFF. Not persisted in
+  localStorage; a page refresh also clears it.
+
+### Added -- Operator UI surfacing
+
+- **`INTL` pill in the order header** appears next to the order ID
+  when the destination country is non-US. ISO country code appended
+  to the address line (`123 Foo St, City, ON M5V (CA)`) as a
+  secondary visual cue.
+- **Settings UI `International` tab** (admin-only): enable toggle,
+  default duty payer (DAP / DDP) dropdown, four tax-ID inputs
+  (EIN, EORI, IOSS, UK VAT) marked `autocomplete="off"`, and a
+  comma-separated banned-country input with client-side
+  validation (dedupe, uppercase, 2-letter regex filter so a typo
+  cannot accidentally lock down a region).
+
+### Added -- Carrier-engine + tracking-inference intl awareness
+
+- **`CarrierEngine.check_carrier_conflict` accepts `dest_country=`
+  kwarg** and returns `None` (skips rural-ZIP / PO Box / USPS-vs-
+  UPS swap heuristics) for non-US destinations. The legacy carrier
+  picked upstream is authoritative; dockd does not second-guess
+  international routing.
+- **`_carrier_from_tracking` recognizes international prefixes** on
+  the manual-link path: DHL Express (10 digits), DHL eCommerce
+  (`GM` prefix), USPS-handoff S10 alphanumeric (`CP` / `LM` / `RA`
+  / etc.), Royal Mail S10 (`LX` / `LE` / `LF`), Canada Post S10
+  (`EA` / `EE` / `EC`). Unknown S10 prefixes fall through to
+  `'INTL'` rather than `'UNKNOWN'` so the audit row still records a
+  shape hint.
+
+### Added -- Storage
+
+- **`ship_history` schema** gains four columns:
+  `destination_country`, `customs_value`, `customs_currency`,
+  `hs_codes`. Idempotent ALTER block for upgrading existing DBs
+  (SQLite has no `ADD COLUMN IF NOT EXISTS`, so the migration
+  inspects `PRAGMA table_info` and adds only when absent). Columns
+  remain `NULL` for domestic shipments to keep the row width
+  light; international rows record the destination ISO code, total
+  declared customs value, currency code, and a comma-separated HS
+  code list for downstream audit.
+
+### Security
+
+- **`SettingsStore.public_subset()` does not leak tax IDs** (EIN /
+  EORI / IOSS / UK VAT) or the banned-country list. Operator UI
+  only gets `international_enabled` so it can render the pill +
+  toggle button without admin scope.
+- **All upstream-supplied customs strings (description, HS code,
+  country of origin) are XML-escaped** in the ShipRush XML
+  builder. Sentry is the trust boundary in principle, but defense
+  in depth is cheap.
+- **Banned-destination enforcement is server-side only.** The
+  operator UI has no toggle, no override, and no client-side bypass
+  path; the gate runs after `backend.get_order` so a direct POST to
+  `/ship_order` with a known-banned SO is still rejected.
+
+### Fixed -- Settings UI: in-progress edits no longer lost
+
+- Clicking **"+ Add box"** (or "+ Add FedEx box", or "+ Add
+  station") used to wipe any edits the operator had typed into
+  existing rows. The push to `settings.boxes` happened before a DOM
+  read, so `renderBoxes()` rebuilt the table from the stale array.
+  Same bug fired when clicking "remove" on any row. Fix calls the
+  existing `read*Table()` helper before the mutation in all six
+  sites (three `add*Row` functions + three inline remove handlers).
+  Operators can now add multiple rows in a single editing session
+  without losing typed-but-unsaved values.
+
+### Added -- Regression tests
+
+- **`tests/services/test_international.py`** (39 tests). Coverage:
+  `CustomsData` round-trip / normalization / negative-rejection /
+  garbage-tolerance; `OrderItem`+`OrderData` round-trip with
+  customs and currency; `_normalize_country` /
+  `_is_international` / `_build_customs_items` helpers;
+  `_build_shiprush_payload` country + currency + customs items
+  propagation; ShipRush XML emission for domestic (no commodities)
+  and international (commodities + CustomsValue + IncotermsCode);
+  XML injection escaping; customs-value summation;
+  `_carrier_from_tracking` international prefixes (DHL, USPS S10,
+  Royal Mail, Canada Post, unknown-S10 fallthrough, plus the
+  regression check that US prefixes still resolve); `SettingsStore.
+  is_country_banned` (defaults seeded, case-insensitive, runtime
+  update); `public_subset` secrecy for tax IDs + banned list.
+- **`tests/services/test_international.py::TestAdultSignatureDcis
+  Emission`** (4 tests). Off case emits no `<DCISType>` tag; UPS
+  service emits `ADS`; USPS service emits `ADS`; FedEx service
+  emits `F4`.
+- **`tests/blueprints/test_shipping_routes.py::TestBannedDestination
+  Gate`** (2 tests). KP destination blocks the ship and does NOT
+  call ShipRush or `confirm_shipped`; CA destination passes through
+  the gate normally and completes the ship.
+- **`tests/blueprints/test_index_template.py::TestAdultSignature
+  Toggle`** (5 tests). Sidebar button present in markup; state
+  variable initialized false; payload carries `adult_signature` at
+  both assembly sites; success branch resets to false; companion
+  INTL-pill marker present.
+- **`tests/blueprints/test_settings_routes.py::TestDynamicRowEdit
+  Preservation`** (4 tests). Each of the three `add*Row` functions
+  calls the matching `read*Table` before the array mutation; the
+  inline remove handlers do the same.
+
+### Tests
+
+- 245 passing (191 -> 245). Net +54 across the new modules.
+  Highlights:
+  - 39 `test_international` (new module)
+  - 11 `test_index_template` (5 new for adult-signature, was 6)
+  - 25 `test_settings_routes` (4 new for dynamic-row preservation)
+  - 19 `test_shipping_routes` (2 new for banned-destination gate)
+
+### Operator notes
+
+- **International orders will fail to ship until Sentry surfaces
+  per-item customs data.** That's the next release on the Sentry
+  side; dockd v0.7.0 is the receiving end of that wire. For
+  international orders today, route them out-of-band (label printed
+  via the carrier's web UI) and use dockd's manual-link path to
+  attach the tracking number after the fact.
+- **Banned-destination defaults are conservative.** If your
+  compliance posture requires more (e.g., specific OFAC SDN-list
+  enforcement, EAR end-user screening), treat the seeded `CU` /
+  `IR` / `KP` / `SY` list as a starting point and extend in the
+  Settings tab. Dockd does NOT perform OFAC SDN screening on the
+  consignee name; that is a separate compliance layer.
+- **Adult-signature toggle is per-ship by design.** Operators must
+  re-arm the toggle for every order that needs it. The auto-
+  disarm prevents the most common workflow error (forgetting to
+  turn it off after the high-value order ships).
+
+### Open / deferred
+
+- **Sentry item-master extension** (`hs_code`, `country_of_origin`,
+  `unit_weight_oz`, `unit_value`) ships in Sentry v1.11; dockd
+  v0.7.0 is wire-ready for it.
+- **CN22 / CN23 customs forms** (USPS international small-parcel
+  paper forms) and **commercial invoice PDFs** for high-value
+  shipments are deferred to v0.8.0. ShipRush returns the customs
+  form image embedded in the label for most services, which covers
+  the common case; the standalone PDF flow is for shipments
+  >USD 2500 declared value or destinations that require a separate
+  signed document.
+- **DDP/DDU per-order toggle** (override the settings default at
+  ship time) deferred. v0.7.0 uses the settings-level default for
+  every ship.
+- **Metric weight thresholds + dim-weight formula** for non-US
+  carriers that bill on kg/cm. Today every dim-weight check uses
+  inches + pounds; international carriers in metric markets get
+  approximately-right answers via on-the-wire conversion.
+- **OFAC SDN denied-party screening** on the consignee name (vs.
+  the country-level block already in place). External vendor
+  call, deferred.
+- **Hazardous-goods / lithium-battery declaration** XML fields.
+  ShipRush supports these (`<ContainsBattery>`,
+  `<DangerousGoods>`); dockd does not surface them yet. Relevant
+  if the catalog contains battery-driven SKUs (fish finders,
+  headlamps).
+- **International returns labels.** Deferred to v1.0+.
+
 ## [v0.6.1] - 2026-05-12
 
 "UPC scan matching restored" patch. Surfaced during the first live

@@ -134,6 +134,7 @@ def create_app(config_class=None):
         printer=printer,
         label_cache=label_cache,
         config=config,
+        settings=app.settings_store,
     )
     app.scale_reader = scale
 

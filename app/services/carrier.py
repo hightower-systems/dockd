@@ -212,7 +212,8 @@ class CarrierEngine:
         return None, {'l': l, 'w': w, 'h': h}, '02'
 
     def check_carrier_conflict(self, box_id, dims, weight, ship_method,
-                               dest_zip, address, ca_shipping_paid):
+                               dest_zip, address, ca_shipping_paid,
+                               dest_country='US'):
         """Check if the optimal carrier differs from the order's current
         carrier. Returns a conflict dict if a switch should be suggested,
         or None."""
@@ -226,6 +227,16 @@ class CarrierEngine:
 
         # Skip FedEx orders entirely.
         if 'fedex' in method_lower:
+            return None
+
+        # International (v0.7.0): the rural-ZIP, PO Box, and USPS-vs-UPS
+        # swap heuristics are all keyed on US carrier physics. For
+        # non-US destinations the legacy carrier picked upstream
+        # (Sentry / the order entry system) is authoritative; dockd
+        # does not second-guess. ShipRush still gets the label, but
+        # this conflict-suggestion modal stays out of the way.
+        normalized_country = str(dest_country or 'US').strip().upper()[:2] or 'US'
+        if normalized_country != 'US':
             return None
 
         optimal, reason = self.determine_carrier(box_id, dims, weight)

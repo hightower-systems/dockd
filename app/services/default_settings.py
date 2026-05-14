@@ -101,6 +101,31 @@ DEFAULT_SETTINGS = {
 
     # SKUs operators may scan-override.
     "override_exception_skus": [],
+
+    # International shipping (v0.7.0). Disabled by default so the
+    # repo ships as a domestic-only tool until an admin opts in. When
+    # enabled, dockd will route orders with a non-US destination
+    # through ShipRush's customs path. The four tax-ID fields appear
+    # on outgoing customs declarations and are required by certain
+    # destination countries (EORI for EU, IOSS for low-value EU,
+    # UK VAT for UK <=GBP135). `default_duty_payer` drives the
+    # ShipRush <IncotermsCode>: 'recipient' is DDU (customer pays
+    # duty at delivery), 'sender' is DDP (shipper pre-pays).
+    # `banned_countries` is a hard-block allow-deny list keyed on
+    # ISO 3166 alpha-2; OFAC comprehensive-sanctions defaults are
+    # seeded so a fresh install doesn't accidentally ship to a
+    # sanctioned destination. Operators tune via the Settings UI.
+    "international": {
+        "enabled": False,
+        "default_duty_payer": "recipient",
+        "shipper_tax_ids": {
+            "ein": "",
+            "eori": "",
+            "ioss": "",
+            "vat_uk": "",
+        },
+        "banned_countries": ["CU", "IR", "KP", "SY"],
+    },
 }
 
 

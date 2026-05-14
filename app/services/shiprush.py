@@ -58,7 +58,8 @@ class ShipRushClient:
 
     def generate_label(self, fulfillment_data, dims, weight_lbs,
                        packaging_code='02', order_number=None,
-                       box_id=None, carrier_override=None):
+                       box_id=None, carrier_override=None,
+                       adult_signature=False):
         """Build and POST XML to ShipRush, return tracking + ZPL label."""
         addr = fulfillment_data.get('shippingAddress', {})
         cust = fulfillment_data.get('entity', {})
@@ -76,6 +77,36 @@ class ShipRushClient:
         zip_code = escape(addr.get('zip', ''))
         phone = escape(addr.get('addrPhone', self._fallback_phone()))
 
+        # International (v0.7.0): the upstream payload now carries
+        # destination country and per-item customs data. Anything
+        # other than 'US' is treated as international and triggers
+        # a <Commodities> block + <CustomsValue> + <IncotermsCode>.
+        # ShippingService is responsible for blocking banned
+        # destinations before this method is ever called; this
+        # builder just translates whatever it gets.
+        dest_country_raw = str(addr.get('country') or 'US').strip().upper()[:2] or 'US'
+        dest_country = escape(dest_country_raw)
+        is_international = dest_country_raw != 'US'
+        customs_items = fulfillment_data.get('customs_items') or []
+        currency_raw = str(fulfillment_data.get('currency') or 'USD').strip().upper()[:3] or 'USD'
+        currency = escape(currency_raw)
+        duty_payer_raw = (fulfillment_data.get('duties_paid_by') or '').strip().lower()
+        # ShipRush <IncotermsCode>: DAP = recipient pays duty (DDU);
+        # DDP = sender pays. Default to DAP (the more common case).
+        incoterms = 'DDP' if duty_payer_raw == 'sender' else 'DAP'
+
+        commodities_block = ''
+        customs_block = ''
+        if is_international:
+            commodities_block = self._build_commodities_xml(customs_items, currency_raw)
+            customs_total = self._sum_customs_value(customs_items)
+            customs_block = (
+                f'<CustomsValue><Amount>{customs_total:.2f}</Amount>'
+                f'<Currency>{currency}</Currency></CustomsValue>'
+                f'<IncotermsCode>{escape(incoterms)}</IncotermsCode>'
+                f'<ContentType>Merchandise</ContentType>'
+            )
+
         ns_method_raw = fulfillment_data.get('shipMethod', {}).get('refName', '')
         ns_method = ns_method_raw.lower()
         logger.info("Shipping method detected: '%s'", ns_method_raw)
@@ -92,6 +123,21 @@ class ShipRushClient:
             )
 
         service_tag = f'<UPSServiceType>{service_code}</UPSServiceType>'
+
+        # Adult-signature delivery confirmation (v0.7.0). ShipRush
+        # uses the same <DCISType> element across all three carriers
+        # but the accepted enum values differ: FedEx wants 'F4', UPS
+        # and USPS want 'ADS'. Account key is the most reliable
+        # signal for the FedEx branch since UPS and FedEx share a
+        # numeric carrier_id of 1.
+        dcis_block = ''
+        if adult_signature:
+            dcis_code = 'F4' if (account_key or '').upper() == 'FEDEX' else 'ADS'
+            dcis_block = f'<DCISType>{dcis_code}</DCISType>'
+            logger.info(
+                "ShipRush: adult signature requested (carrier_account=%s, dcis=%s)",
+                account_key, dcis_code,
+            )
 
         package_ref2 = ''
         if box_id is not None:
@@ -129,7 +175,7 @@ class ShipRushClient:
           <City>{city}</City>
           <State>{state}</State>
           <PostalCode>{zip_code}</PostalCode>
-          <Country>US</Country>
+          <Country>{dest_country}</Country>
           <Phone>{phone}</Phone>
         </Address>
       </DeliveryAddress>
@@ -141,7 +187,10 @@ class ShipRushClient:
         <PkgHeight>{dims['h']}</PkgHeight>
         <PackageReference1>{order_num}</PackageReference1>
         {package_ref2}
+        {dcis_block}
       </Package>
+      {customs_block}
+      {commodities_block}
     </Shipment>
   </ShipTransaction>
   <ShipSettings>
@@ -150,6 +199,12 @@ class ShipRushClient:
   </ShipSettings>
 </ShipRequest>"""
 
+        if is_international:
+            logger.info(
+                "ShipRush: international shipment (ref: %s, dest: %s, "
+                "commodities: %d, currency: %s, incoterms: %s)",
+                order_num, dest_country_raw, len(customs_items), currency_raw, incoterms,
+            )
         logger.info("ShipRush: sending XML (ref: %s, carrier %s)", order_num, carrier_id)
 
         try:
@@ -188,6 +243,76 @@ class ShipRushClient:
             return {'status': 'error', 'message': self.friendly_error(r.text)}
         except Exception as e:
             return {'status': 'error', 'message': self.friendly_error(e)}
+
+    # ---- international / customs XML -----------------------------------
+
+    @staticmethod
+    def _sum_customs_value(customs_items):
+        """Total declared customs value across all line items.
+
+        Safe to call on an empty or malformed list; missing fields
+        contribute zero. ShipRush's <CustomsValue><Amount> takes the
+        order-level total (not per-item) so this helper sums what the
+        per-item rows declared.
+        """
+        total = 0.0
+        for item in customs_items or []:
+            try:
+                qty = float(item.get('qty') or 0)
+                unit = float(item.get('unit_value') or 0)
+            except (TypeError, ValueError):
+                continue
+            if qty > 0 and unit > 0:
+                total += qty * unit
+        return total
+
+    @staticmethod
+    def _build_commodities_xml(customs_items, currency):
+        """Build the <Commodities> block for an international shipment.
+
+        Every string field is `escape`d to prevent XML injection from
+        an upstream-supplied product description or HS code (Sentry
+        is the trust boundary here but defense in depth is cheap).
+        Numerics are formatted via `:f` so a malformed `qty` cannot
+        break out of the tag. If an item is missing required fields
+        we still emit a Commodity row -- ShipRush will reject the
+        label, which is the correct fail-loud behavior on incomplete
+        customs data rather than a silent partial declaration.
+        """
+        if not customs_items:
+            return ''
+        currency_safe = escape(str(currency or 'USD'))
+        rows = []
+        for item in customs_items:
+            description = escape(str(item.get('description') or 'Merchandise'))
+            hs_code = escape(str(item.get('hs_code') or ''))
+            origin = escape(str(item.get('country_of_origin') or '').upper()[:2])
+            try:
+                qty = int(item.get('qty') or 0)
+            except (TypeError, ValueError):
+                qty = 0
+            try:
+                unit_weight_oz = float(item.get('unit_weight_oz') or 0)
+            except (TypeError, ValueError):
+                unit_weight_oz = 0.0
+            try:
+                unit_value = float(item.get('unit_value') or 0)
+            except (TypeError, ValueError):
+                unit_value = 0.0
+            # ShipRush expects per-unit weight in pounds.
+            unit_weight_lb = unit_weight_oz / 16.0 if unit_weight_oz else 0.0
+            rows.append(
+                f'    <Commodity>'
+                f'<Description>{description}</Description>'
+                f'<HarmonizedCode>{hs_code}</HarmonizedCode>'
+                f'<CountryOfManufacture>{origin}</CountryOfManufacture>'
+                f'<Quantity>{qty}</Quantity>'
+                f'<UnitWeight>{unit_weight_lb:.4f}</UnitWeight>'
+                f'<UnitValue><Amount>{unit_value:.2f}</Amount>'
+                f'<Currency>{currency_safe}</Currency></UnitValue>'
+                f'</Commodity>'
+            )
+        return '<Commodities>\n' + '\n'.join(rows) + '\n      </Commodities>'
 
     # ---- carrier/service resolution ------------------------------------
 

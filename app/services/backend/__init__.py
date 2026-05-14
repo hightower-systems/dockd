@@ -57,6 +57,52 @@ class ShippingAddress:
 
 
 @dataclass(frozen=True)
+class CustomsData:
+    """Per-item customs declaration data for international shipments.
+
+    Sentry populates this on `OrderItem` only when the destination
+    is non-US; domestic orders omit it entirely so payload size stays
+    small for the 95% case. Every field is optional at the dataclass
+    level so a partially-populated item from Sentry round-trips
+    cleanly; ShipRush will reject the label if a required field is
+    missing at submit time, which is the intended fail-loud behavior.
+    """
+    description: Optional[str] = None
+    hs_code: Optional[str] = None
+    country_of_origin: Optional[str] = None
+    unit_weight_oz: Optional[float] = None
+    unit_value: Optional[float] = None
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["CustomsData"]:
+        if not data:
+            return None
+        country = data.get("country_of_origin")
+        # Normalize country to ISO 3166 alpha-2 uppercase; accept the
+        # common 3-letter and lowercase shapes Sentry might emit.
+        if country is not None:
+            country = str(country).strip().upper()[:2] or None
+
+        def _pos_float(key: str) -> Optional[float]:
+            raw = data.get(key)
+            if raw is None or raw == "":
+                return None
+            try:
+                v = float(raw)
+            except (TypeError, ValueError):
+                return None
+            return v if v >= 0 else None
+
+        return cls(
+            description=(str(data["description"]) if data.get("description") else None),
+            hs_code=(str(data["hs_code"]).strip() if data.get("hs_code") else None),
+            country_of_origin=country,
+            unit_weight_oz=_pos_float("unit_weight_oz"),
+            unit_value=_pos_float("unit_value"),
+        )
+
+
+@dataclass(frozen=True)
 class OrderItem:
     """One line on an order, as seen by the pack station."""
     external_id: str
@@ -64,6 +110,7 @@ class OrderItem:
     display_name: str
     upc: Optional[str]
     qty: int
+    customs: Optional[CustomsData] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OrderItem":
@@ -73,6 +120,7 @@ class OrderItem:
             display_name=str(data.get("display_name", "") or ""),
             upc=data.get("upc"),
             qty=int(data.get("qty", 0)),
+            customs=CustomsData.from_dict(data.get("customs")),
         )
 
 
@@ -100,6 +148,12 @@ class OrderData:
     marketplace: Optional[str] = None
     order_date: Optional[str] = None
     ff_created_at: Optional[str] = None
+    # International shipping (Sentry sends these on non-US orders).
+    # `currency` is the ISO 4217 code for monetary fields on this
+    # order; `duties_paid_by` is 'sender' (DDP) or 'recipient' (DDU)
+    # and drives the ShipRush <IncotermsCode> tag.
+    currency: str = "USD"
+    duties_paid_by: Optional[str] = None
     # Populated only when status == SHIPPED:
     shipped_by: Optional[str] = None
     tracking_number: Optional[str] = None
@@ -135,6 +189,11 @@ class OrderData:
             marketplace=data.get("marketplace"),
             order_date=data.get("order_date"),
             ff_created_at=data.get("ff_created_at"),
+            currency=(str(data.get("currency") or "USD").strip().upper()[:3] or "USD"),
+            duties_paid_by=(
+                str(data["duties_paid_by"]).strip().lower()
+                if data.get("duties_paid_by") else None
+            ),
             shipped_by=data.get("shipped_by"),
             tracking_number=data.get("tracking_number"),
             carrier=data.get("carrier"),

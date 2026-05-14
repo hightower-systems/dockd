@@ -76,19 +76,81 @@ def _carrier_from_tracking(tracking):
     number but does not pick a carrier. Sentry requires `carrier` on
     every POST /ship body; an inferred value is sent and the operator
     can void + re-link if the inference is wrong.
+
+    International carriers (DHL, Royal Mail, Canada Post, Aramex)
+    are recognized by their published label prefixes; ambiguous
+    numerics still resolve to 'UNKNOWN' so the operator can override.
     """
     t = (tracking or '').strip().upper()
     if not t:
         return 'UNKNOWN'
     if t.startswith('1Z'):
         return 'UPS'
-    # USPS labels typically 20-22 digits starting with 9.
+    # USPS labels typically 20-22 digits starting with 9 (domestic)
+    # or alpha+digits like LM/LN/CP/RA for international.
     if re.match(r'^9\d{19,21}$', t):
         return 'USPS'
+    # USPS / UPU International S10 format: 2 letters + 9 digits + 2
+    # letters (e.g., LM123456789US, RA987654321CA). The trailing
+    # country code identifies the origin; carrier semantics depend on
+    # who handed it off. CP/EE/EA/EC/RA/RC/RR/CV are typical Royal
+    # Mail / Canada Post / USPS international handoffs.
+    if re.match(r'^[A-Z]{2}\d{9}[A-Z]{2}$', t):
+        prefix = t[:2]
+        if prefix in {'CP', 'LM', 'LN', 'LP', 'RA', 'RB', 'RC', 'RR', 'RU', 'RX'}:
+            return 'USPS_INTL'
+        if prefix in {'LX', 'LE', 'LF'}:
+            return 'ROYAL_MAIL'
+        if prefix in {'EA', 'EE', 'EC'}:
+            return 'CANADA_POST'
+        return 'INTL'
+    # DHL Express: 10 digits, no other shape that long; DHL eCommerce
+    # uses GM + digits (mostly US returns).
+    if re.match(r'^\d{10}$', t):
+        return 'DHL'
+    if t.startswith('GM') and re.match(r'^GM\d+$', t):
+        return 'DHL_ECOMMERCE'
     # FedEx labels are 12 or 15 digit numerics; cannot reliably
     # disambiguate from USPS without a service code, so default to
     # "UNKNOWN" for short all-digit strings.
     return 'UNKNOWN'
+
+
+def _normalize_country(country):
+    """Return uppercase ISO 3166 alpha-2 or 'US' if missing/blank.
+
+    Centralized so payload-building and the banned-country gate use
+    identical normalization rules; otherwise a 'us' / 'usa' / ' US '
+    skew between the two could let a banned destination through.
+    """
+    if not country:
+        return 'US'
+    return str(country).strip().upper()[:2] or 'US'
+
+
+def _is_international(order):
+    """True when the destination is non-US."""
+    return _normalize_country(order.shipping_address.country) != 'US'
+
+
+def _build_customs_items(order):
+    """Project order items into the customs dict shape shiprush.py
+    expects. Returns [] for orders without per-item customs metadata
+    so domestic flows do not pay the cost."""
+    out = []
+    for it in order.items:
+        c = it.customs
+        if not c:
+            continue
+        out.append({
+            'description': c.description or it.display_name or it.sku,
+            'hs_code': c.hs_code or '',
+            'country_of_origin': c.country_of_origin or '',
+            'qty': it.qty,
+            'unit_weight_oz': c.unit_weight_oz or 0,
+            'unit_value': c.unit_value or 0,
+        })
+    return out
 
 
 def _build_shiprush_payload(order):
@@ -108,10 +170,18 @@ def _build_shiprush_payload(order):
             'city': addr.city or '',
             'state': addr.state or '',
             'zip': addr.postal_code or '',
+            'country': _normalize_country(addr.country),
             'addrPhone': addr.phone or order.customer_phone or '',
         },
         'entity': {'refName': order.customer_name or 'Valued Customer'},
         'shipMethod': {'refName': order.ship_method or ''},
+        # International (v0.7.0): the customs / currency / duty-payer
+        # fields are read by ShipRushClient when the destination is
+        # non-US. Empty / 'USD' / None for domestic orders so the
+        # ShipRush XML stays bit-for-bit unchanged on the 95% path.
+        'customs_items': _build_customs_items(order),
+        'currency': order.currency or 'USD',
+        'duties_paid_by': order.duties_paid_by,
         # Legacy keys ShipRushClient does not consume but other parts
         # of the legacy _log_to_db path read; kept empty here for
         # backward compatibility within ShippingService.
@@ -153,6 +223,7 @@ def _order_to_load_dict(order):
             'city': addr.city or '',
             'state': addr.state or '',
             'zip': addr.postal_code or '',
+            'country': _normalize_country(addr.country),
             'phone': addr.phone or order.customer_phone or '',
         },
         'order_total': order.order_total if order.order_total is not None else 0.0,
@@ -227,7 +298,7 @@ def _classify_for_attempt(exc):
 class ShippingService:
 
     def __init__(self, backend, shiprush, carrier_engine, printer,
-                 label_cache, config, ship_attempts=None):
+                 label_cache, config, ship_attempts=None, settings=None):
         self.backend = backend
         self.shiprush = shiprush
         self.carrier = carrier_engine
@@ -235,6 +306,11 @@ class ShippingService:
         self.label_cache = label_cache
         self.config = config
         self.ship_attempts = ship_attempts or ShipAttemptsStore()
+        # SettingsStore is needed for the banned-country gate; fall
+        # back to the carrier engine's reference (always set) so
+        # legacy / test instantiations that omit the new kwarg keep
+        # working without a forced refactor.
+        self.settings = settings or getattr(carrier_engine, '_settings', None)
         self.ship_counts = {}  # {(username, "YYYY-MM-DD"): count}
 
     # ---- order load ----------------------------------------------------
@@ -271,7 +347,8 @@ class ShippingService:
                    ob_dims=None, client_ip=None, user=None,
                    order_loaded_at=None, ff_created_at=None,
                    idempotency_key=None,
-                   station_id=None, station_label=None):
+                   station_id=None, station_label=None,
+                   adult_signature=False):
         """Execute the full ship flow.
 
         Steps: refresh order from backend -> resolve box dims ->
@@ -294,6 +371,26 @@ class ShippingService:
         except BackendError as exc:
             return {'status': 'error', 'message': _backend_error_to_message(exc)}
 
+        # International destination gate (v0.7.0). Runs before any
+        # carrier / label work so a sanctioned destination cannot
+        # consume ShipRush minutes, label inventory, or operator time.
+        # Server-side enforcement is the source of truth; frontend
+        # warnings are advisory only.
+        dest_country = _normalize_country(order.shipping_address.country)
+        if self.settings and self.settings.is_country_banned(dest_country):
+            logger.warning(
+                "Ship blocked: banned destination country %s for SO %s",
+                dest_country, clean,
+            )
+            return {
+                'status': 'error',
+                'message': (
+                    f'Shipping to {dest_country} is blocked by an active '
+                    f'banned-destination rule. Contact compliance or update '
+                    f'the rule in Settings -> International before retrying.'
+                ),
+            }
+
         ship_method_raw = (order.ship_method or '').strip()
         effective_box_id, dims, packaging_code = self.carrier.resolve_box_dims(
             box_id, ship_method_raw, ob_dims,
@@ -309,6 +406,7 @@ class ShippingService:
             conflict = self.carrier.check_carrier_conflict(
                 box_id, dims, weight, ship_method_raw,
                 dest_zip, full_address, float(ca_shipping_paid or 0),
+                dest_country=dest_country,
             )
             if conflict:
                 return conflict
@@ -338,11 +436,12 @@ class ShippingService:
                 carrier_switched = True
                 logger.info("Carrier override: %s -> %s", ship_method_raw, carrier_override)
 
-        # Generate label via ShipRush (unchanged).
+        # Generate label via ShipRush.
         ff_data = _build_shiprush_payload(order)
         result = self.shiprush.generate_label(
             ff_data, dims, weight, packaging_code, clean,
             box_id=effective_box_id, carrier_override=carrier_override,
+            adult_signature=bool(adult_signature),
         )
         if result.get('status') == 'error':
             return {'status': 'error', 'message': user_friendly_error(result.get('message', ''))}
@@ -444,7 +543,21 @@ class ShippingService:
         logger.info("Sentry confirmed ship: fulfillment_id=%s audit=%s",
                     ship_result.fulfillment_id, ship_result.audit_log_id)
 
-        # Local history.
+        # Local history. For international shipments, capture the
+        # destination country + total declared customs value + the
+        # comma-separated HS codes so historical audits do not have
+        # to re-query Sentry to reconstruct what got declared.
+        customs_value_total = None
+        customs_currency_log = None
+        hs_codes_log = None
+        if dest_country != 'US':
+            customs_items_log = ff_data.get('customs_items') or []
+            customs_value_total = self.shiprush._sum_customs_value(customs_items_log) or None
+            customs_currency_log = ff_data.get('currency') or 'USD'
+            hs_codes_log = ','.join(
+                str(ci.get('hs_code') or '').strip()
+                for ci in customs_items_log if ci.get('hs_code')
+            ) or None
         self._log_to_db(
             order_number=clean, fulfillment_id=str(ship_result.fulfillment_id),
             ff_data=ff_data, effective_box_id=effective_box_id,
@@ -461,6 +574,10 @@ class ShippingService:
             sentry_fulfillment_id=ship_result.fulfillment_id,
             manual_link=False,
             idempotency_key=idempotency_key,
+            destination_country=dest_country,
+            customs_value=customs_value_total,
+            customs_currency=customs_currency_log,
+            hs_codes=hs_codes_log,
         )
 
         today = datetime.now().strftime('%Y-%m-%d')
@@ -804,7 +921,9 @@ class ShippingService:
                    external_id=None, customer_shipping_paid=None,
                    order_total=None, sentry_audit_log_id=None,
                    sentry_fulfillment_id=None, manual_link=False,
-                   idempotency_key=None):
+                   idempotency_key=None, destination_country=None,
+                   customs_value=None, customs_currency=None,
+                   hs_codes=None):
         """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
@@ -841,9 +960,10 @@ class ShippingService:
                     ship_speed_seconds, carrier_switched, station_id, station_label,
                     external_id, customer_shipping_paid, order_total,
                     sentry_audit_log_id, sentry_fulfillment_id, manual_link,
-                    idempotency_key)
+                    idempotency_key, destination_country, customs_value,
+                    customs_currency, hs_codes)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?, ?)""",
+                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (order_number, fulfillment_id, items_skus, effective_box_id,
                  dims_str, weight, shipping_cost, tracking, final_carrier,
                  ship_method_raw, current_user,
@@ -853,7 +973,9 @@ class ShippingService:
                  station_id or '', station_label or '',
                  external_id or '', customer_shipping_paid, order_total,
                  sentry_audit_log_id, sentry_fulfillment_id,
-                 1 if manual_link else 0, idempotency_key),
+                 1 if manual_link else 0, idempotency_key,
+                 destination_country, customs_value, customs_currency,
+                 hs_codes),
             )
             conn.commit()
             conn.close()
