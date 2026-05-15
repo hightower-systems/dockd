@@ -121,6 +121,25 @@ app = Flask(__name__)
 CORS(app, origins=[DOCKD_ORIGIN])
 
 
+# -- CHROME PRIVATE NETWORK ACCESS (CR-117+) --------------------------------
+# When an HTTPS public-origin page (e.g. dockd on Azure Container Apps)
+# tries to fetch http://127.0.0.1:5050, Chrome 117+ issues a CORS
+# preflight that includes:
+#     Access-Control-Request-Private-Network: true
+# and refuses the call unless the server's preflight response carries:
+#     Access-Control-Allow-Private-Network: true
+# flask_cors doesn't emit this header. The hook below adds it on every
+# OPTIONS response whose Origin matches our configured dockd_origin --
+# narrow enough that we don't open the agent to other origins.
+@app.after_request
+def _allow_private_network(response):
+    if request.method == 'OPTIONS':
+        origin = request.headers.get('Origin', '')
+        if origin and origin == DOCKD_ORIGIN:
+            response.headers['Access-Control-Allow-Private-Network'] = 'true'
+    return response
+
+
 # -- /whoami ---------------------------------------------------------------
 @app.route('/whoami', methods=['GET'])
 def whoami():
