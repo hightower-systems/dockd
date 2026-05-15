@@ -77,11 +77,21 @@ def _check_csrf():
     if request.path == '/login':
         return
     origin = request.headers.get('Origin', '')
+    # ALLOWED_ORIGINS env: comma-separated extra origins to accept (e.g.
+    # the hosted ACA URL). Trailing slashes are normalized. Defaults to
+    # empty so local-LAN behavior is unchanged.
+    extra = [
+        o.strip().rstrip('/')
+        for o in (os.environ.get('ALLOWED_ORIGINS') or '').split(',')
+        if o.strip()
+    ]
+    origin_norm = origin.rstrip('/')
     allowed = (
         origin.startswith('http://127.0.0.1')
         or origin.startswith('http://localhost')
         or origin.startswith('http://192.168.')
         or origin.startswith('http://10.')
+        or origin_norm in extra
     )
     if origin and not allowed:
         logger.warning('CSRF: blocked POST from origin %s to %s', origin, request.path)
