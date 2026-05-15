@@ -36,10 +36,18 @@ OVERRIDE_DB_PATH = _data_path('override.db')
 
 
 def _get_db(path):
-    conn = sqlite3.connect(path, timeout=10)
+    # SQLITE_NOLOCK=1 opens via URI with `nolock=1`, telling SQLite to skip
+    # all OS-level filesystem locks. Required for SMB-backed shares (Azure
+    # Files) where fcntl byte-range locks aren't honored across processes.
+    # Safe only when caller guarantees serialized access — Dockd is min=max=1
+    # replica, so the single Python process is the sole writer.
+    nolock = os.environ.get('SQLITE_NOLOCK', '').strip().lower() in ('1', 'true', 'yes')
+    if nolock:
+        conn = sqlite3.connect(f"file:{path}?nolock=1", uri=True, timeout=10)
+    else:
+        conn = sqlite3.connect(path, timeout=10)
     # Journal mode is env-driven so deployments on network filesystems
-    # (Azure Files / SMB) can opt out of WAL, which needs byte-range locks
-    # SMB doesn't provide. Defaults to WAL to preserve upstream behavior.
+    # (Azure Files / SMB) can opt out of WAL. Defaults to WAL upstream.
     journal_mode = os.environ.get('SQLITE_JOURNAL_MODE', 'WAL').strip()
     if journal_mode:
         conn.execute(f"PRAGMA journal_mode={journal_mode}")
