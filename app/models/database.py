@@ -37,7 +37,12 @@ OVERRIDE_DB_PATH = _data_path('override.db')
 
 def _get_db(path):
     conn = sqlite3.connect(path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Journal mode is env-driven so deployments on network filesystems
+    # (Azure Files / SMB) can opt out of WAL, which needs byte-range locks
+    # SMB doesn't provide. Defaults to WAL to preserve upstream behavior.
+    journal_mode = os.environ.get('SQLITE_JOURNAL_MODE', 'WAL').strip()
+    if journal_mode:
+        conn.execute(f"PRAGMA journal_mode={journal_mode}")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     return conn
