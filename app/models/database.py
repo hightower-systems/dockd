@@ -22,8 +22,17 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-SHIP_DB_PATH = resource_path('shipping_history.db')
-OVERRIDE_DB_PATH = resource_path('override.db')
+def _data_path(filename: str) -> str:
+    """DATA_DIR-aware path resolver. Falls back to project-root resource_path
+    when DATA_DIR is unset, preserving the upstream local-dev default."""
+    data_dir = os.environ.get('DATA_DIR')
+    if data_dir:
+        return os.path.join(data_dir, filename)
+    return resource_path(filename)
+
+
+SHIP_DB_PATH = _data_path('shipping_history.db')
+OVERRIDE_DB_PATH = _data_path('override.db')
 
 
 def _get_db(path):
