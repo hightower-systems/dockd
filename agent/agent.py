@@ -43,7 +43,7 @@ import hid
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-AGENT_VERSION = '2.0'
+AGENT_VERSION = '2.1'
 
 # -- LOAD CONFIG -----------------------------------------------------------
 
@@ -128,16 +128,39 @@ CORS(app, origins=[DOCKD_ORIGIN])
 #     Access-Control-Request-Private-Network: true
 # and refuses the call unless the server's preflight response carries:
 #     Access-Control-Allow-Private-Network: true
-# flask_cors doesn't emit this header. The hook below adds it on every
-# OPTIONS response whose Origin matches our configured dockd_origin --
-# narrow enough that we don't open the agent to other origins.
-@app.after_request
-def _allow_private_network(response):
-    if request.method == 'OPTIONS':
-        origin = request.headers.get('Origin', '')
-        if origin and origin == DOCKD_ORIGIN:
-            response.headers['Access-Control-Allow-Private-Network'] = 'true'
-    return response
+#
+# History: a prior @app.after_request hook tried to set this header,
+# but flask-cors runs its own after_request that re-emits the header
+# with value 'false', clobbering our value. Result: pack stations
+# still saw the "SCALE AGENT NOT RUNNING" banner even with the agent
+# running. WSGI middleware sits OUTSIDE the Flask response cycle, so
+# flask-cors can't override us — we get the final word on the headers
+# the browser actually sees.
+class _PNAMiddleware:
+    """Force Access-Control-Allow-Private-Network: true for the dockd
+    origin. Must be WSGI middleware (not Flask after_request) because
+    flask-cors's own hook would otherwise overwrite to 'false'.
+    """
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        origin = environ.get('HTTP_ORIGIN', '')
+
+        def _start(status, headers, exc_info=None):
+            if origin == DOCKD_ORIGIN:
+                headers = [
+                    (k, v) for k, v in headers
+                    if k.lower() != 'access-control-allow-private-network'
+                ]
+                headers.append(('Access-Control-Allow-Private-Network', 'true'))
+            return start_response(status, headers, exc_info)
+
+        return self.wsgi_app(environ, _start)
+
+
+app.wsgi_app = _PNAMiddleware(app.wsgi_app)
 
 
 # -- /whoami ---------------------------------------------------------------
