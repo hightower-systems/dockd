@@ -931,7 +931,14 @@
         function fetchOrder(soNumber) {
             const url = `/get_order_details?so_number=${encodeURIComponent(soNumber)}`;
 
-            fetch(url)
+            // dockdApi() forwards the per-station X-Sentry-Token captured
+            // by bootstrapAgent() from the local scale agent's /whoami.
+            // Plain fetch() works today only because the deployment-wide
+            // DOCKD_SENTRY_TOKEN env fallback catches it, which makes
+            // audit attribution a lie (every load looks like it came from
+            // the same token). Future-proofs against removing the env
+            // fallback entirely.
+            dockdApi(url)
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'success') {
@@ -1411,7 +1418,8 @@
 
         function linkFetchOrder(ticket) {
             const url = `/get_order_details?so_number=${encodeURIComponent(ticket)}`;
-            fetch(url).then(r => r.json()).then(data => {
+            // Same per-station X-Sentry-Token forwarding as fetchOrder().
+            dockdApi(url).then(r => r.json()).then(data => {
                 if (data.status === 'success') {
                     document.getElementById('link-choice-box').style.display = 'none';
                     linkOrderId = ticket;
