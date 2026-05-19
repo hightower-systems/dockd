@@ -82,18 +82,20 @@ def create_app(config_class=None):
     limiter.init_app(app)
 
     # Settings + user stores. JSON files at project root by default;
-    # override locations with SETTINGS_PATH / USERS_PATH env vars (used
-    # by tests and Azure volume mounts).
+    # override locations with DATA_DIR (base for all on-disk state) or
+    # the per-file SETTINGS_PATH / USERS_PATH env vars (used by tests
+    # and externalized-state deploys).
     from app.services.settings import SettingsStore
     from app.services.users_store import UsersStore
 
+    data_dir = os.environ.get('DATA_DIR') or os.getcwd()
     settings_path = os.environ.get(
         'SETTINGS_PATH',
-        os.path.join(os.getcwd(), 'settings.json'),
+        os.path.join(data_dir, 'settings.json'),
     )
     users_path = os.environ.get(
         'USERS_PATH',
-        os.path.join(os.getcwd(), 'users.json'),
+        os.path.join(data_dir, 'users.json'),
     )
     app.settings_store = SettingsStore(settings_path)
     app.users_store = UsersStore(users_path)
@@ -110,8 +112,8 @@ def create_app(config_class=None):
         app.settings_store.get('label_max_age_hours', config.LABEL_MAX_AGE_HOURS)
     )
     label_cache = LabelCache(
-        history_file='ship_history.json',
-        label_dir='label_history',
+        history_file=os.path.join(data_dir, 'ship_history.json'),
+        label_dir=os.path.join(data_dir, 'label_history'),
         max_age_hours=label_max_age_hours,
     )
     shiprush = ShipRushClient(app.settings_store, label_cache)
