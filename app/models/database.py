@@ -22,13 +22,29 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-SHIP_DB_PATH = resource_path('shipping_history.db')
-OVERRIDE_DB_PATH = resource_path('override.db')
+def _data_path(filename: str) -> str:
+    """DATA_DIR-aware path resolver. Falls back to resource_path (project
+    root or PyInstaller bundle) when DATA_DIR is unset, preserving the
+    local-dev default."""
+    data_dir = os.environ.get('DATA_DIR')
+    if data_dir:
+        return os.path.join(data_dir, filename)
+    return resource_path(filename)
+
+
+SHIP_DB_PATH = _data_path('shipping_history.db')
+OVERRIDE_DB_PATH = _data_path('override.db')
 
 
 def _get_db(path):
     conn = sqlite3.connect(path, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Journal mode is env-driven so deployments on network filesystems
+    # (SMB / Azure Files / NFS variants) can opt out of WAL, which needs
+    # byte-range locks those filesystems don't reliably provide. Defaults
+    # to WAL to preserve upstream behavior.
+    journal_mode = os.environ.get('SQLITE_JOURNAL_MODE', 'WAL').strip()
+    if journal_mode:
+        conn.execute(f"PRAGMA journal_mode={journal_mode}")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     return conn

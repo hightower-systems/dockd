@@ -43,7 +43,7 @@ import hid
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-AGENT_VERSION = '2.0'
+AGENT_VERSION = '2.1'
 
 # -- LOAD CONFIG -----------------------------------------------------------
 
@@ -119,6 +119,30 @@ logger.setLevel(logging.INFO)
 # X-Agent-Key header.
 app = Flask(__name__)
 CORS(app, origins=[DOCKD_ORIGIN])
+
+
+class _PNAMiddleware:
+    # WSGI middleware that overrides the Private Network Access response
+    # header AFTER flask-cors has already written its own (which defaults
+    # to false in flask-cors < 5). Public HTTPS pages (dockd_origin) won't
+    # be allowed to reach this localhost agent without this header set
+    # to true on the preflight response.
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        origin = environ.get('HTTP_ORIGIN', '')
+
+        def _start(status, headers, exc_info=None):
+            if origin == DOCKD_ORIGIN:
+                headers = [(k, v) for k, v in headers if k.lower() != 'access-control-allow-private-network']
+                headers.append(('Access-Control-Allow-Private-Network', 'true'))
+            return start_response(status, headers, exc_info)
+
+        return self.wsgi_app(environ, _start)
+
+
+app.wsgi_app = _PNAMiddleware(app.wsgi_app)
 
 
 # -- /whoami ---------------------------------------------------------------
