@@ -1045,8 +1045,16 @@
                 div.className = `item-row ${isComplete ? 'completed' : ''}`;
                 const showOverride = overrideExceptions.has(i.sku) && !isComplete;
                 const upcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
+                // Surface intentional short-picks / partial-fulfills.
+                // qty < qty_ordered means warehouse is shipping less than
+                // ordered on this SO. Only render when qty_ordered is
+                // present and divergent; the 99% same-value case stays
+                // visually quiet.
+                const shortPickChip = (i.qty_ordered != null && parseInt(i.qty_ordered) !== parseInt(i.quantity))
+                    ? `<span style="background:#fef3c7; color:#92400e; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; margin-left:10px; letter-spacing:0.04em;">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
+                    : '';
                 div.innerHTML = `
-                    <div style="flex-grow:1"><div class="sku">${i.item.refName}</div><div class="desc">${i.sku}${upcLine}</div></div>
+                    <div style="flex-grow:1"><div class="sku">${i.item.refName}${shortPickChip}</div><div class="desc">${i.sku}${upcLine}</div></div>
                     <div style="display:flex; align-items:center;">
                         <div class="qty-badge">${i.scanned_qty} / ${i.quantity}</div>
                         ${showOverride ? `<button class="manual-btn" onclick="manualOverride(${index})">&#10004;</button>` : ''}
@@ -1470,7 +1478,10 @@
                 const linkShowOverride = !isComplete && overrideExceptions.has(i.sku);
                 const overrideBtn = linkShowOverride ? `<button type="button" class="manual-btn" onclick="linkManualOverride(${index})" style="width:40px;height:40px;border-radius:50%;border:none;background:#e0e0e0;color:#555;cursor:pointer;font-size:18px;margin-left:10px;flex-shrink:0;" title="Mark verified">&#10004;</button>` : '';
                 const linkUpcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
-                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}${linkUpcLine}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
+                const linkShortPickChip = (i.qty_ordered != null && parseInt(i.qty_ordered) !== parseInt(i.quantity))
+                    ? `<span style="background:#fef3c7; color:#92400e; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px; margin-left:8px; letter-spacing:0.04em;">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
+                    : '';
+                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}${linkShortPickChip}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}${linkUpcLine}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
                 list.appendChild(div);
             });
         }

@@ -102,24 +102,56 @@ class CustomsData:
         )
 
 
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Best-effort int coercion that floors-to-default on bad input.
+
+    Sentry's dockd-scope contract guarantees integer non-null qty /
+    qty_ordered fields, but defensive parsing here means a malformed
+    upstream payload renders as 0/default instead of 500'ing the
+    operator's page.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+
 @dataclass(frozen=True)
 class OrderItem:
-    """One line on an order, as seen by the pack station."""
+    """One line on an order, as seen by the pack station.
+
+    `qty` is units physically in the tote awaiting scan-verify (Sentry's
+    sales_order_lines.quantity_picked). `qty_ordered` is units the
+    customer originally ordered (sales_order_lines.quantity_ordered).
+    `qty < qty_ordered` indicates a short-pick or partial-fulfill --
+    the difference will not ship on this SO.
+    """
     external_id: str
     sku: str
     display_name: str
     upc: Optional[str]
     qty: int
+    qty_ordered: Optional[int] = None
     customs: Optional[CustomsData] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OrderItem":
+        # qty_ordered is required in the new Sentry contract but
+        # Optional here so new dockd against pre-contract Sentry still
+        # works (falls back to qty-only display in the UI).
+        qty_ordered_raw = data.get("qty_ordered")
         return cls(
             external_id=str(data.get("external_id", "")),
             sku=str(data.get("sku", "")),
             display_name=str(data.get("display_name", "") or ""),
             upc=data.get("upc"),
-            qty=int(data.get("qty", 0)),
+            qty=_coerce_int(data.get("qty"), 0),
+            qty_ordered=_coerce_int(qty_ordered_raw) if qty_ordered_raw is not None else None,
             customs=CustomsData.from_dict(data.get("customs")),
         )
 

@@ -207,6 +207,7 @@ def _order_to_load_dict(order):
             'display_name': it.display_name,
             'upc': it.upc or '',
             'qty': it.qty,
+            'qty_ordered': it.qty_ordered,
         }
         for it in order.items
     ]
