@@ -275,6 +275,34 @@ def _backend_error_to_message(exc, default='Could not load order.'):
     return default
 
 
+# Statuses dockd is allowed to load and ship. Sentry is the source of
+# truth and sends the per-order allow-list in `shippable_from_statuses`;
+# this is the fallback used only when that field is absent, so the gate
+# never silently opens up.
+_DEFAULT_SHIPPABLE_STATUSES = ('PICKED', 'PACKED')
+
+
+def _shippable_status_error(order):
+    """Return a user-facing message if `order` is not in a shippable
+    status, else None.
+
+    Mirrors Sentry's own status check so a non-shippable order is
+    rejected at scan/ship time -- before any ShipRush label is
+    generated -- instead of after, where a 410 from confirm_shipped
+    would orphan a tracking number Sentry refuses to record.
+    """
+    allowed = [
+        str(s).strip().upper()
+        for s in (order.shippable_from_statuses or [])
+        if str(s).strip()
+    ] or list(_DEFAULT_SHIPPABLE_STATUSES)
+    current = (order.status or '').strip().upper()
+    if current in allowed:
+        return None
+    shown = (order.status or '').strip() or 'UNKNOWN'
+    return f"This order is {shown}, Must be {' or '.join(allowed)} to be shipped."
+
+
 def _classify_for_attempt(exc):
     """Return ('unknown' | 'rejected', error_kind, status_code).
 
@@ -339,6 +367,17 @@ class ShippingService:
             logger.error("load_order crash: %s", exc)
             return {'status': 'error', 'message': user_friendly_error(exc)}
 
+        # Shippable-status gate: an order whose status Sentry will not
+        # accept must not flow into the pack screen at all, so the
+        # operator never packs an order that can't be shipped.
+        status_msg = _shippable_status_error(order)
+        if status_msg:
+            logger.info(
+                "load_order blocked: SO %s status %s not shippable",
+                clean, order.status,
+            )
+            return {'status': 'error', 'message': status_msg}
+
         return _order_to_load_dict(order)
 
     # ---- ship ----------------------------------------------------------
@@ -371,6 +410,21 @@ class ShippingService:
             order = self.backend.get_order(clean)
         except BackendError as exc:
             return {'status': 'error', 'message': _backend_error_to_message(exc)}
+
+        # Shippable-status gate. Runs before any carrier / label work so
+        # an order in a status Sentry will reject cannot burn a ShipRush
+        # tracking number that confirm_shipped then refuses to record
+        # (the orphaned-label / "did not update upstream" failure). The
+        # status can change between load and ship, and a stale browser
+        # can POST directly, so this re-check is the real enforcement;
+        # the load_order gate is the operator-facing early warning.
+        status_msg = _shippable_status_error(order)
+        if status_msg:
+            logger.warning(
+                "Ship blocked: SO %s status %s not in shippable statuses",
+                clean, order.status,
+            )
+            return {'status': 'error', 'message': status_msg}
 
         # International destination gate (v0.7.0). Runs before any
         # carrier / label work so a sanctioned destination cannot

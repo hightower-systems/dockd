@@ -272,6 +272,64 @@ class TestBannedDestinationGate:
         assert mock_shiprush.generate_label.called
 
 
+class TestShippableStatusGate:
+    """An order may only flow into dockd / be shipped when its status is
+    in the Sentry allow-list (PICKED / PACKED). A non-shippable status is
+    rejected at scan time and again before any ShipRush label is burned,
+    so a tracking number is never orphaned by a confirm_shipped 410."""
+
+    def test_load_order_blocks_non_shippable_status(self, auth_client, mock_backend):
+        mock_backend.get_order.return_value = _sample_order(
+            so_number='SO-OPEN', status='OPEN')
+        resp = auth_client.get('/get_order_details?so_number=SO-OPEN')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['status'] == 'error'
+        assert data['message'] == (
+            'This order is OPEN, Must be PICKED or PACKED to be shipped.')
+
+    def test_load_order_allows_picked(self, auth_client, mock_backend):
+        mock_backend.get_order.return_value = _sample_order(
+            so_number='SO-P', status='PICKED')
+        data = auth_client.get('/get_order_details?so_number=SO-P').get_json()
+        assert data['status'] == 'success'
+
+    def test_load_order_allows_packed(self, auth_client, mock_backend):
+        mock_backend.get_order.return_value = _sample_order(
+            so_number='SO-P', status='PACKED')
+        data = auth_client.get('/get_order_details?so_number=SO-P').get_json()
+        assert data['status'] == 'success'
+
+    def test_load_order_blocks_shipped_status(self, auth_client, mock_backend):
+        # SHIPPED is not PICKED/PACKED, so it is blocked too (void uses
+        # its own modal / endpoint, not this load path).
+        mock_backend.get_order.return_value = _sample_order(
+            so_number='SO-S', status='SHIPPED', shipped=True)
+        data = auth_client.get('/get_order_details?so_number=SO-S').get_json()
+        assert data['status'] == 'error'
+        assert data['message'] == (
+            'This order is SHIPPED, Must be PICKED or PACKED to be shipped.')
+
+    def test_ship_order_blocks_before_shiprush_and_writeback(
+            self, auth_client, mock_backend, mock_shiprush):
+        # The orphaned-label fix: a non-shippable order must not reach
+        # generate_label (which burns a tracking number) nor
+        # confirm_shipped (which Sentry would 410).
+        mock_backend.get_order.return_value = _sample_order(
+            so_number='SO-OPEN', status='OPEN')
+        resp = auth_client.post('/ship_order', json={
+            'so_number': 'SO-OPEN',
+            'box_id': '1',
+            'weight': 1.5,
+        })
+        data = resp.get_json()
+        assert data['status'] == 'error'
+        assert data['message'] == (
+            'This order is OPEN, Must be PICKED or PACKED to be shipped.')
+        mock_shiprush.generate_label.assert_not_called()
+        mock_backend.confirm_shipped.assert_not_called()
+
+
 class TestManualLinkWithBackend:
 
     def test_manual_link_happy_path(self, auth_client, mock_backend):
