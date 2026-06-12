@@ -116,6 +116,28 @@ def _carrier_from_tracking(tracking):
     return 'UNKNOWN'
 
 
+def _carrier_for_writeback(tracking, fallback):
+    """Authoritative carrier code to record on the upstream ship write.
+
+    The carrier sent to Sentry's `ship.confirmed` must describe the
+    label ShipRush actually produced -- not the carrier the order's
+    requested ship method *implies*. Those two diverge (stikman28/dockd#6):
+    a USPS-named service whose label lacks the literal "usps" token
+    (e.g. "Priority Mail") could resolve to the UPS Ground account,
+    yielding a 1Z UPS label that the old method-string path still
+    reported as USPS.
+
+    The tracking-number prefix is the ground truth, so it wins:
+    `1Z` -> UPS, `9...` -> USPS. Only when the prefix is ambiguous
+    (FedEx numerics, international formats) do we fall back to the
+    carrier the caller inferred from the override / ship method.
+    """
+    inferred = _carrier_from_tracking(tracking)
+    if inferred in ('UPS', 'USPS'):
+        return inferred
+    return fallback or 'UNKNOWN'
+
+
 def _normalize_country(country):
     """Return uppercase ISO 3166 alpha-2 or 'US' if missing/blank.
 
@@ -510,13 +532,17 @@ class ShippingService:
         # The browser receives `zpl_b64` in the success response and
         # forwards it to its local scale-agent at 127.0.0.1:5050/print.
 
-        # Resolve the carrier name to send to Sentry. carrier_override
-        # is a slot key like UPS / USPS / FEDEX_ONE_RATE_2DAY; without
-        # an override, infer from the ship method.
+        # Resolve the carrier name to send to Sentry. The tracking
+        # number is authoritative (1Z -> UPS, 9... -> USPS): it reflects
+        # the label ShipRush actually produced, which can differ from the
+        # carrier the requested ship method implies (stikman28/dockd#6).
+        # The override / ship-method value is only the fallback for
+        # tracking prefixes the inference can't disambiguate (FedEx).
         if carrier_switched:
-            sentry_carrier = carrier_override
+            method_carrier = carrier_override
         else:
-            sentry_carrier = self.carrier.current_carrier(ship_method_raw) or 'UNKNOWN'
+            method_carrier = self.carrier.current_carrier(ship_method_raw)
+        sentry_carrier = _carrier_for_writeback(tracking, method_carrier)
 
         # Confirm ship on Sentry, persisting the attempt before the
         # network call so a crash mid-flight leaves a recoverable row.
@@ -617,7 +643,8 @@ class ShippingService:
             order_number=clean, fulfillment_id=str(ship_result.fulfillment_id),
             ff_data=ff_data, effective_box_id=effective_box_id,
             dims=dims, weight=weight, shipping_cost=shipping_cost,
-            tracking=tracking, carrier_override=carrier_override,
+            tracking=tracking, carrier=sentry_carrier,
+            carrier_override=carrier_override,
             carrier_switched=carrier_switched, ship_method_raw=ship_method_raw,
             current_user=operator_username, ff_created_at=ff_created_at,
             order_loaded_at=order_loaded_at,
@@ -978,7 +1005,7 @@ class ShippingService:
                    sentry_fulfillment_id=None, manual_link=False,
                    idempotency_key=None, destination_country=None,
                    customs_value=None, customs_currency=None,
-                   hs_codes=None):
+                   hs_codes=None, carrier=None):
         """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
@@ -986,7 +1013,13 @@ class ShippingService:
             # by _build_shiprush_payload) into the legacy SKU/qty log.
             items_skus = json.dumps([])
             dims_str = f"{dims['l']}x{dims['w']}x{dims['h']}"
-            final_carrier = carrier_override if carrier_switched else ship_method_raw
+            # Prefer the authoritative carrier resolved from the actual
+            # tracking number (the value recorded upstream) so the local
+            # `carrier` column matches ship.confirmed. Fall back to the
+            # legacy override/method derivation only when a caller omits
+            # it (stikman28/dockd#6).
+            final_carrier = carrier if carrier is not None else (
+                carrier_override if carrier_switched else ship_method_raw)
 
             fulfillment_age_minutes = None
             if ff_created_at:

@@ -181,11 +181,42 @@ class TestShipOrderWithBackend:
         assert mock_backend.confirm_shipped.called
         call = mock_backend.confirm_shipped.call_args
         assert call.kwargs['tracking'] == '1Z999AA10123456784'
+        # stikman28/dockd#6: the order's ship method is "USPS Ground
+        # Advantage" but ShipRush returned a 1Z (UPS) label, so the
+        # carrier recorded upstream must follow the tracking number
+        # (UPS), not the requested method (which would say USPS).
+        assert call.kwargs['carrier'] == 'UPS'
         assert call.kwargs['operator_username'] == 'TestUser'
         assert call.kwargs['manual_link'] is False
         # idempotency_key is a UUID4 string generated per call.
         assert isinstance(call.kwargs['idempotency_key'], str)
         assert len(call.kwargs['idempotency_key']) == 36
+
+    def test_ship_order_reports_usps_carrier_from_9_tracking(
+            self, auth_client, mock_backend, mock_shiprush):
+        """stikman28/dockd#6, the other direction: when ShipRush returns
+        a USPS (9...) label the carrier recorded upstream is USPS,
+        derived from the tracking prefix rather than re-parsed from the
+        ship method."""
+        mock_backend.get_order.return_value = _sample_order(so_number='SO-USPS')
+        mock_shiprush.generate_label.return_value = {
+            'status': 'success',
+            'tracking': '9405511899223456781234',
+            'zpl_b64': 'XlhBClRFU1QKXlha',
+            'cost': 6.10,
+        }
+        mock_backend.confirm_shipped.return_value = ShipResult(
+            status='SHIPPED', tracking='9405511899223456781234',
+            shipped_at='2026-05-11T15:30:00Z',
+            fulfillment_id=45, audit_log_id=9004,
+        )
+        resp = auth_client.post('/ship_order', json={
+            'so_number': 'SO-USPS',
+            'box_id': '1',
+            'weight': 1.0,
+        })
+        assert resp.get_json()['status'] == 'success'
+        assert mock_backend.confirm_shipped.call_args.kwargs['carrier'] == 'USPS'
 
     def test_ship_order_already_shipped(self, auth_client, mock_backend,
                                         mock_shiprush):
