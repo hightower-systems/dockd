@@ -235,6 +235,36 @@ class OrderData:
 
 
 @dataclass(frozen=True)
+class ItemData:
+    """One item as seen by the bin sticker / item barcode features.
+
+    `quantity_on_hand` is summed across the locations Sentry returns
+    on the lookup; the per-bin breakdown is dropped because the label
+    UI only needs an aggregate count for the on-screen confirmation.
+    """
+    item_id: int
+    sku: str
+    item_name: str
+    upc: Optional[str]
+    quantity_on_hand: int
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ItemData":
+        item = data.get("item") or {}
+        locations = data.get("locations") or []
+        qty_total = 0
+        for loc in locations:
+            qty_total += _coerce_int(loc.get("quantity_on_hand"), 0)
+        return cls(
+            item_id=_coerce_int(item.get("item_id"), 0),
+            sku=str(item.get("sku") or ""),
+            item_name=str(item.get("item_name") or ""),
+            upc=(str(item["upc"]) if item.get("upc") else None),
+            quantity_on_hand=qty_total,
+        )
+
+
+@dataclass(frozen=True)
 class ShipResult:
     """Sentry POST /ship response shape.
 
@@ -366,6 +396,9 @@ class OrderBackend(Protocol):
     """
 
     def get_order(self, so_number: str) -> OrderData:
+        ...
+
+    def lookup_item(self, barcode: str) -> ItemData:
         ...
 
     def confirm_shipped(
