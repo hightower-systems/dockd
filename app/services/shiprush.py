@@ -358,7 +358,32 @@ class ShipRushClient:
 
         method = (ns_method or '').lower()
 
-        if 'usps' in method or 'post' in method or 'media' in method:
+        # FedEx first: a USPS *service* word can sit inside a FedEx
+        # method name ("FedEx Priority Overnight", "FedEx First
+        # Overnight"), so FedEx must be matched before the USPS gate
+        # below -- otherwise the broadened USPS service-name match
+        # would steal those orders.
+        if 'fedex' in method:
+            if '2day' in method or '2 day' in method or 'second day' in method:
+                return _resolve_or_fallback('FEDEX_2DAY', 'FEDEX_GROUND')
+            if 'overnight' in method:
+                return _resolve_or_fallback('FEDEX_OVERNIGHT', 'FEDEX_GROUND')
+            if 'one rate' in method or 'onerate' in method:
+                return _resolve_or_fallback('FEDEX_ONE_RATE', 'FEDEX_GROUND')
+            return _resolve_or_fallback('FEDEX_GROUND')
+
+        # USPS, recognized by the carrier token OR a USPS service name.
+        # The service-name set ('ground advantage' / 'priority' /
+        # 'first class') mirrors CarrierEngine.current_carrier so a
+        # method like "Priority Mail" -- which lacks the literal "usps"
+        # token -- resolves to a USPS account instead of falling through
+        # to the UPS Ground default. Before this, such orders shipped UPS
+        # (a 1Z label on the UPS account) while dockd still reported them
+        # as USPS, the carrier mislabel in stikman28/dockd#6. Keep this
+        # list in lockstep with current_carrier's USPS branch.
+        if ('usps' in method or 'post' in method or 'media' in method
+                or 'ground advantage' in method or 'priority' in method
+                or 'first class' in method):
             if 'priority' in method:
                 return _resolve_or_fallback('USPS_PRIORITY', 'USPS_GROUND_ADV')
             if 'media' in method:
@@ -368,15 +393,6 @@ class ShipRushClient:
             if 'parcel' in method:
                 return _resolve_or_fallback('USPS_PARCEL', 'USPS_GROUND_ADV')
             return _resolve_or_fallback('USPS_GROUND_ADV', 'UPS_GROUND')
-
-        if 'fedex' in method:
-            if '2day' in method or '2 day' in method or 'second day' in method:
-                return _resolve_or_fallback('FEDEX_2DAY', 'FEDEX_GROUND')
-            if 'overnight' in method:
-                return _resolve_or_fallback('FEDEX_OVERNIGHT', 'FEDEX_GROUND')
-            if 'one rate' in method or 'onerate' in method:
-                return _resolve_or_fallback('FEDEX_ONE_RATE', 'FEDEX_GROUND')
-            return _resolve_or_fallback('FEDEX_GROUND')
 
         if 'next day' in method:
             return _resolve_or_fallback('UPS_NEXT_DAY', 'UPS_GROUND')

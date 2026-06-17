@@ -130,3 +130,69 @@ class TestPopulatedServices:
         result = c._resolve_carrier('USPS Priority Mail', None)
         # USPS_PRIORITY slot absent; falls through to USPS_GROUND_ADV.
         assert result == ('18', 'USPS_EASYPOST', 'USPSGNDADV', False)
+
+
+class TestUspsServiceNamesWithoutUspsToken:
+    """stikman28/dockd#6: a USPS service name that lacks the literal
+    "usps" token ("Priority Mail", "Ground Advantage", "First Class")
+    must resolve to a USPS account, not fall through to the UPS Ground
+    default. Previously these shipped on the UPS account (a 1Z label)
+    while dockd reported them as USPS. The recognized service-name set
+    mirrors CarrierEngine.current_carrier."""
+
+    def _client(self):
+        return _make_client(services={
+            'USPS_GROUND_ADV': {
+                'carrier_id': '18', 'account_key': 'USPS_EASYPOST',
+                'service_code': 'USPSGNDADV', 'is_one_rate': False,
+            },
+            'USPS_PRIORITY': {
+                'carrier_id': '18', 'account_key': 'USPS_EASYPOST',
+                'service_code': 'USPSPRI', 'is_one_rate': False,
+            },
+            'USPS_FIRST_CLASS': {
+                'carrier_id': '18', 'account_key': 'USPS_EASYPOST',
+                'service_code': 'USPSFC', 'is_one_rate': False,
+            },
+            'UPS_GROUND': {
+                'carrier_id': '1', 'account_key': 'UPS',
+                'service_code': '03', 'is_one_rate': False,
+            },
+        })
+
+    def test_priority_mail_resolves_usps(self):
+        # No "usps" token, just the service name.
+        _, account_key, service_code, _ = self._client()._resolve_carrier(
+            'Priority Mail', None)
+        assert account_key == 'USPS_EASYPOST'
+        assert service_code == 'USPSPRI'
+
+    def test_ground_advantage_resolves_usps(self):
+        _, account_key, service_code, _ = self._client()._resolve_carrier(
+            'Ground Advantage', None)
+        assert account_key == 'USPS_EASYPOST'
+        assert service_code == 'USPSGNDADV'
+
+    def test_first_class_resolves_usps(self):
+        _, account_key, service_code, _ = self._client()._resolve_carrier(
+            'First Class Package', None)
+        assert account_key == 'USPS_EASYPOST'
+        assert service_code == 'USPSFC'
+
+    def test_fedex_priority_overnight_stays_fedex(self):
+        """A USPS service word inside a FedEx method name must not be
+        stolen by the broadened USPS gate -- FedEx is matched first."""
+        c = _make_client(services={
+            'FEDEX_OVERNIGHT': {
+                'carrier_id': '1', 'account_key': 'FEDEX',
+                'service_code': 'F01', 'is_one_rate': False,
+            },
+            'USPS_PRIORITY': {
+                'carrier_id': '18', 'account_key': 'USPS_EASYPOST',
+                'service_code': 'USPSPRI', 'is_one_rate': False,
+            },
+        })
+        _, account_key, service_code, _ = c._resolve_carrier(
+            'FedEx Priority Overnight', None)
+        assert account_key == 'FEDEX'
+        assert service_code == 'F01'
