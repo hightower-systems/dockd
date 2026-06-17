@@ -98,8 +98,36 @@
         .user-badge { font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.65); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; padding: 0 4px; }
         .sidebar-footer .sidebar-btn { padding: 10px 14px; font-size: 0.8125rem; }
 
+        /* --- MODULE NAV (always visible: SHIP / BIN / LABELS) --- */
+        .module-nav { padding: 10px 10px 4px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid rgba(142, 39, 22, 0.4); }
+        .module-btn { width: 100%; padding: 10px 14px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,0.7); font-family: inherit; font-size: 0.75rem; font-weight: 700; text-align: left; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; transition: background 0.15s, color 0.15s; }
+        .module-btn:hover { background: rgba(142, 39, 22, 0.4); color: white; }
+        .module-btn.active { background: var(--brand-red); color: white; }
+
         /* --- SHIP ORDERS NAV (hidden until ship module active) --- */
         #ship-nav { display: none; }
+
+        /* --- BIN / LABELS PANELS --- */
+        #bin-panel, #labels-panel { display: none; flex-direction: column; height: 100%; padding: 32px; gap: 20px; overflow-y: auto; }
+        .module-title { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--brand-red); margin: 0; }
+        .module-sub { font-size: 0.875rem; color: var(--text-muted); margin: 0 0 8px 0; }
+        .module-card { background: var(--card-tan); border: 1px solid var(--card-border); border-left: 4px solid var(--brand-red); border-radius: var(--radius-xl); padding: 24px; max-width: 720px; }
+        .scan-input { width: 100%; padding: 16px 20px; font-size: 1.125rem; font-family: inherit; border: 1px solid var(--brand-red); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); }
+        .scan-input:focus { border-color: var(--brand-red-bright); box-shadow: 0 0 0 2px rgba(142, 39, 22, 0.15); }
+        .module-result { margin-top: 18px; padding: 16px 18px; border-radius: 6px; background: var(--cream); border: 1px solid var(--card-border); font-size: 0.9375rem; min-height: 24px; }
+        .module-result.ok { border-color: rgba(22, 163, 74, 0.45); background: rgba(22, 163, 74, 0.08); }
+        .module-result.err { border-color: rgba(220, 38, 38, 0.45); background: rgba(220, 38, 38, 0.06); color: var(--error-red); }
+        .module-result p { margin: 4px 0; }
+        .module-result strong { font-weight: 700; }
+        .labels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .labels-grid select, .labels-grid input { width: 100%; padding: 12px 14px; font-family: inherit; font-size: 1rem; border: 1px solid var(--card-border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
+        .labels-grid label { display: block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+        .labels-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+        .labels-tab { flex: 1; padding: 10px 14px; border: 1px solid var(--card-border); background: transparent; color: var(--text-muted); font-family: inherit; font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 4px; cursor: pointer; }
+        .labels-tab.active { background: var(--brand-red); color: white; border-color: var(--brand-red); }
+        .print-btn { width: 100%; margin-top: 16px; padding: 14px 20px; font-size: 1rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; border: none; border-radius: 6px; background: var(--brand-red); color: white; cursor: pointer; }
+        .print-btn:hover { background: var(--brand-red-bright); }
+        .print-btn:disabled { background: var(--text-muted); cursor: not-allowed; }
 
         /* --- MAIN CONTENT AREA --- */
         .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -418,6 +446,11 @@
     <aside class="sidebar">
         <div class="sidebar-logo">DOCKD <span>Shipping</span></div>
         <div class="fedex-badge">FedEx</div>
+        <div class="module-nav">
+            <button type="button" class="module-btn" id="mod-btn-ship" onclick="showShipOrders()">Ship Orders</button>
+            <button type="button" class="module-btn" id="mod-btn-bin" onclick="showBin()">Bin Sticker</button>
+            <button type="button" class="module-btn" id="mod-btn-labels" onclick="showLabels()">Item Labels</button>
+        </div>
         <nav class="sidebar-nav">
             <div id="ship-nav">
                 <button type="button" class="sidebar-btn" onclick="softReset()" title="Reset Screen (Esc)">CLEAR</button>
@@ -495,6 +528,66 @@
                 </div>
             </div>
 
+        </div>
+
+        <!-- BIN STICKER PANEL -->
+        <div id="bin-panel">
+            <h2 class="module-title">Bin Sticker</h2>
+            <p class="module-sub">Scan a UPC or type a SKU. A 4x2 sticker with the SKU + barcode prints to the station Zebra.</p>
+            <div class="module-card">
+                <input type="text" id="bin-scan-input" class="scan-input" placeholder="Scan or type SKU / UPC..." autocomplete="off">
+                <div id="bin-result" class="module-result" style="display:none;"></div>
+            </div>
+        </div>
+
+        <!-- ITEM LABELS PANEL -->
+        <div id="labels-panel">
+            <h2 class="module-title">Item Barcode Labels</h2>
+            <p class="module-sub">Print small 1.5x1 barcode labels for spools and small parts.</p>
+            <div class="module-card">
+                <div class="labels-tabs">
+                    <button type="button" class="labels-tab active" id="labels-tab-thread" onclick="switchLabelsMode('thread')">Thread Catalog</button>
+                    <button type="button" class="labels-tab" id="labels-tab-lookup" onclick="switchLabelsMode('lookup')">Item Lookup</button>
+                </div>
+
+                <div id="labels-mode-thread">
+                    <div class="labels-grid">
+                        <div>
+                            <label for="thread-brand">Brand</label>
+                            <select id="thread-brand" onchange="onThreadBrandChange()"><option>Loading...</option></select>
+                        </div>
+                        <div>
+                            <label for="thread-size">Size</label>
+                            <select id="thread-size" onchange="onThreadSizeChange()"></select>
+                        </div>
+                        <div>
+                            <label for="thread-color">Color</label>
+                            <select id="thread-color"></select>
+                        </div>
+                        <div>
+                            <label for="thread-qty">Quantity (1-100)</label>
+                            <input type="number" id="thread-qty" min="1" max="100" value="1">
+                        </div>
+                    </div>
+                    <button type="button" class="print-btn" id="thread-print-btn" onclick="printThreadLabels()">Print Labels</button>
+                </div>
+
+                <div id="labels-mode-lookup" style="display:none;">
+                    <div class="labels-grid">
+                        <div style="grid-column: span 2;">
+                            <label for="lookup-sku">SKU or UPC</label>
+                            <input type="text" id="lookup-sku" placeholder="Scan or type..." autocomplete="off">
+                        </div>
+                        <div>
+                            <label for="lookup-qty">Quantity (1-100)</label>
+                            <input type="number" id="lookup-qty" min="1" max="100" value="1">
+                        </div>
+                    </div>
+                    <button type="button" class="print-btn" id="lookup-print-btn" onclick="printLookupLabels()">Print Labels</button>
+                </div>
+
+                <div id="labels-result" class="module-result" style="display:none;"></div>
+            </div>
         </div>
 
     </main>
@@ -740,14 +833,249 @@
             } catch(e) {}
         }
 
-        function showShipOrders() {
+        function setActiveModuleBtn(which) {
+            ['ship', 'bin', 'labels'].forEach(k => {
+                const el = document.getElementById('mod-btn-' + k);
+                if (el) el.classList.toggle('active', k === which);
+            });
+        }
+
+        function hideAllPanels() {
             document.getElementById('dashboard-panel').style.display = 'none';
+            document.getElementById('ship-panel').style.display = 'none';
+            document.getElementById('ship-nav').style.display = 'none';
+            document.getElementById('ship-count-display').style.display = 'none';
+            document.getElementById('bin-panel').style.display = 'none';
+            document.getElementById('labels-panel').style.display = 'none';
+        }
+
+        function showShipOrders() {
+            hideAllPanels();
             document.getElementById('ship-panel').style.display = 'flex';
             document.getElementById('ship-nav').style.display = 'block';
             document.getElementById('ship-count-display').style.display = 'block';
             activePanel = 'ship';
+            setActiveModuleBtn('ship');
             updateShipCount();
             setTimeout(() => document.getElementById('main-input').focus(), 100);
+        }
+
+        function showBin() {
+            hideAllPanels();
+            document.getElementById('bin-panel').style.display = 'flex';
+            document.body.classList.remove('fedex-active');
+            activePanel = 'bin';
+            setActiveModuleBtn('bin');
+            const input = document.getElementById('bin-scan-input');
+            input.value = '';
+            document.getElementById('bin-result').style.display = 'none';
+            setTimeout(() => input.focus(), 100);
+        }
+
+        function showLabels() {
+            hideAllPanels();
+            document.getElementById('labels-panel').style.display = 'flex';
+            document.body.classList.remove('fedex-active');
+            activePanel = 'labels';
+            setActiveModuleBtn('labels');
+            document.getElementById('labels-result').style.display = 'none';
+            ensureThreadCatalogLoaded();
+        }
+
+        // ====== BIN STICKER ======
+        let binBusy = false;
+
+        async function submitBinScan(scan) {
+            if (binBusy) return;
+            scan = (scan || '').trim();
+            const result = document.getElementById('bin-result');
+            if (!scan) { return; }
+            binBusy = true;
+            result.style.display = 'block';
+            result.className = 'module-result';
+            result.innerHTML = '<p>Looking up <strong>' + escapeHtml(scan) + '</strong>...</p>';
+            try {
+                const r = await dockdApi('/bins/print', {
+                    method: 'POST',
+                    body: JSON.stringify({ scan_data: scan }),
+                });
+                const body = await r.json();
+                if (!r.ok || body.status !== 'success') {
+                    result.className = 'module-result err';
+                    result.innerHTML = '<p>' + escapeHtml(body.message || 'Lookup failed.') + '</p>';
+                    return;
+                }
+                const printResp = await agentPrintZpl(body.zpl_b64);
+                if (printResp.status !== 'success' && printResp.status !== 'ok') {
+                    result.className = 'module-result err';
+                    result.innerHTML = '<p><strong>' + escapeHtml(body.sku) + '</strong> looked up, but print failed: ' + escapeHtml(printResp.message || 'unknown') + '</p>';
+                    return;
+                }
+                result.className = 'module-result ok';
+                result.innerHTML =
+                    '<p><strong>' + escapeHtml(body.sku) + '</strong> ' +
+                    (body.item_name ? '- ' + escapeHtml(body.item_name) : '') + '</p>' +
+                    '<p>UPC: <strong>' + escapeHtml(body.upc || '(none)') + '</strong></p>' +
+                    '<p>On hand: <strong>' + body.quantity + '</strong></p>' +
+                    '<p>Sticker sent to printer.</p>';
+            } catch (e) {
+                result.className = 'module-result err';
+                result.innerHTML = '<p>Unexpected error: ' + escapeHtml(e.message || String(e)) + '</p>';
+            } finally {
+                binBusy = false;
+                const input = document.getElementById('bin-scan-input');
+                input.value = '';
+                setTimeout(() => input.focus(), 50);
+            }
+        }
+
+        document.getElementById('bin-scan-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                submitBinScan(e.target.value);
+            }
+        });
+
+        // ====== ITEM LABELS ======
+        let labelsCatalog = null;
+        let labelsCatalogLoading = false;
+        let labelsMode = 'thread';
+
+        function switchLabelsMode(mode) {
+            labelsMode = mode;
+            document.getElementById('labels-tab-thread').classList.toggle('active', mode === 'thread');
+            document.getElementById('labels-tab-lookup').classList.toggle('active', mode === 'lookup');
+            document.getElementById('labels-mode-thread').style.display = mode === 'thread' ? '' : 'none';
+            document.getElementById('labels-mode-lookup').style.display = mode === 'lookup' ? '' : 'none';
+            document.getElementById('labels-result').style.display = 'none';
+            if (mode === 'lookup') {
+                setTimeout(() => document.getElementById('lookup-sku').focus(), 50);
+            }
+        }
+
+        async function ensureThreadCatalogLoaded() {
+            if (labelsCatalog || labelsCatalogLoading) return;
+            labelsCatalogLoading = true;
+            const brandSel = document.getElementById('thread-brand');
+            brandSel.innerHTML = '<option>Loading...</option>';
+            try {
+                const r = await dockdApi('/labels/catalog', { method: 'GET' });
+                if (!r.ok) {
+                    const body = await r.json().catch(() => ({}));
+                    brandSel.innerHTML = '<option>' + escapeHtml(body.message || 'Catalog unavailable') + '</option>';
+                    return;
+                }
+                labelsCatalog = await r.json();
+                populateThreadBrands();
+            } catch (e) {
+                brandSel.innerHTML = '<option>Catalog load failed</option>';
+            } finally {
+                labelsCatalogLoading = false;
+            }
+        }
+
+        function populateThreadBrands() {
+            const brandSel = document.getElementById('thread-brand');
+            brandSel.innerHTML = '';
+            (labelsCatalog.brands || []).forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b;
+                opt.textContent = b;
+                brandSel.appendChild(opt);
+            });
+            onThreadBrandChange();
+        }
+
+        function onThreadBrandChange() {
+            const brand = document.getElementById('thread-brand').value;
+            const sizeSel = document.getElementById('thread-size');
+            sizeSel.innerHTML = '';
+            if (!labelsCatalog || !labelsCatalog.catalog[brand]) return;
+            (labelsCatalog.catalog[brand].sizes || []).forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.textContent = s;
+                sizeSel.appendChild(opt);
+            });
+            onThreadSizeChange();
+        }
+
+        function onThreadSizeChange() {
+            const brand = document.getElementById('thread-brand').value;
+            const size = document.getElementById('thread-size').value;
+            const colorSel = document.getElementById('thread-color');
+            colorSel.innerHTML = '';
+            if (!labelsCatalog || !labelsCatalog.catalog[brand]) return;
+            const products = (labelsCatalog.catalog[brand].products || {})[size] || [];
+            products.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.upc;
+                opt.dataset.sku = p.sku || '';
+                opt.textContent = p.color + (p.sku ? ' (' + p.sku + ')' : '');
+                colorSel.appendChild(opt);
+            });
+        }
+
+        async function printThreadLabels() {
+            const colorSel = document.getElementById('thread-color');
+            const opt = colorSel.options[colorSel.selectedIndex];
+            if (!opt) return;
+            const upc = opt.value;
+            const sku = opt.dataset.sku || '';
+            const qty = parseInt(document.getElementById('thread-qty').value, 10) || 1;
+            await dispatchLabelsPrint({ upc, sku, quantity: qty });
+        }
+
+        async function printLookupLabels() {
+            const sku = document.getElementById('lookup-sku').value.trim();
+            const qty = parseInt(document.getElementById('lookup-qty').value, 10) || 1;
+            if (!sku) return;
+            await dispatchLabelsPrint({ sku, quantity: qty });
+        }
+
+        async function dispatchLabelsPrint(payload) {
+            const result = document.getElementById('labels-result');
+            result.style.display = 'block';
+            result.className = 'module-result';
+            result.innerHTML = '<p>Building label...</p>';
+            try {
+                const r = await dockdApi('/labels/print', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                });
+                const body = await r.json();
+                if (!r.ok || body.status !== 'success') {
+                    result.className = 'module-result err';
+                    result.innerHTML = '<p>' + escapeHtml(body.message || 'Print failed.') + '</p>';
+                    return;
+                }
+                const printResp = await agentPrintZpl(body.zpl_b64);
+                if (printResp.status !== 'success' && printResp.status !== 'ok') {
+                    result.className = 'module-result err';
+                    result.innerHTML = '<p>Label built but print failed: ' + escapeHtml(printResp.message || 'unknown') + '</p>';
+                    return;
+                }
+                result.className = 'module-result ok';
+                result.innerHTML =
+                    '<p>Sent <strong>' + body.quantity + '</strong> label(s) to printer.</p>' +
+                    '<p>SKU: <strong>' + escapeHtml(body.sku || '-') + '</strong></p>' +
+                    '<p>UPC: <strong>' + escapeHtml(body.upc) + '</strong></p>';
+            } catch (e) {
+                result.className = 'module-result err';
+                result.innerHTML = '<p>Unexpected error: ' + escapeHtml(e.message || String(e)) + '</p>';
+            }
+        }
+
+        document.getElementById('lookup-sku').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') printLookupLabels();
+        });
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         // ====== AUTO-LOGIN from server session ======

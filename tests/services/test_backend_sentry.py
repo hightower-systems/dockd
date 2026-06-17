@@ -16,6 +16,7 @@ from app.services.backend import (
     IdempotencyLockTimeoutError,
     IdempotencyMismatchError,
     InvalidBodyError,
+    ItemData,
     NetworkError,
     NotFoundError,
     NotInShippableStatusError,
@@ -156,6 +157,59 @@ class TestGetOrder:
         backend = _make_backend(handler)
         with pytest.raises(NetworkError):
             backend.get_order("SO-1001")
+
+
+# ----- lookup_item -------------------------------------------------------
+
+
+class TestLookupItem:
+
+    def test_happy_path_aggregates_quantity_across_locations(self):
+        def handler(request):
+            assert request.method == "GET"
+            assert request.url.path == "/api/v1/dockd/items/053526423167"
+            assert request.headers.get("X-WMS-Token") == "wms_t_unit-test-token"
+            return _ok({
+                "item": {
+                    "item_id": 42,
+                    "sku": "1264-42316",
+                    "item_name": "Antron Yarn Black",
+                    "upc": "053526423167",
+                    "category": "thread",
+                    "weight_lbs": 0.05,
+                },
+                "locations": [
+                    {"bin_id": 1, "bin_code": "A1-01", "quantity_on_hand": 20},
+                    {"bin_id": 2, "bin_code": "A1-02", "quantity_on_hand": 17},
+                ],
+            })
+
+        backend = _make_backend(handler)
+        item = backend.lookup_item("053526423167")
+        assert isinstance(item, ItemData)
+        assert item.sku == "1264-42316"
+        assert item.upc == "053526423167"
+        assert item.quantity_on_hand == 37
+
+    def test_returns_zero_quantity_when_no_locations(self):
+        def handler(request):
+            return _ok({
+                "item": {"item_id": 7, "sku": "X", "item_name": "n", "upc": None},
+                "locations": [],
+            })
+
+        backend = _make_backend(handler)
+        item = backend.lookup_item("X")
+        assert item.upc is None
+        assert item.quantity_on_hand == 0
+
+    def test_404_raises_not_found(self):
+        def handler(request):
+            return _err(404, "not_found", "item not found")
+
+        backend = _make_backend(handler)
+        with pytest.raises(NotFoundError):
+            backend.lookup_item("UNKNOWN")
 
 
 # ----- confirm_shipped ---------------------------------------------------

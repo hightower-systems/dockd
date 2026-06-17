@@ -31,6 +31,7 @@ from app.services.backend import (
     IdempotencyLockTimeoutError,
     IdempotencyMismatchError,
     InvalidBodyError,
+    ItemData,
     NetworkError,
     NotFoundError,
     NotInShippableStatusError,
@@ -153,6 +154,21 @@ class SentryBackend:
             json=body,
         )
         return VoidResult.from_dict(resp.json())
+
+    def lookup_item(self, barcode: str) -> ItemData:
+        """Look up an item by UPC, SKU, or barcode alias.
+
+        Hits the dockd-scoped surface (`/api/v1/dockd/items/<barcode>`),
+        which is authed by the same `X-WMS-Token` as the orders routes
+        and applies the token's warehouse scope to the returned
+        locations. The general `/api/lookup/item/<barcode>` endpoint is
+        JWT-only and rejects WMS tokens. Raises NotFoundError on 404.
+        """
+        resp = self._request(
+            "GET",
+            f"/api/v1/dockd/items/{barcode}",
+        )
+        return ItemData.from_dict(resp.json())
 
     def health(self) -> bool:
         try:

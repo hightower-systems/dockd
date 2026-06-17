@@ -146,14 +146,23 @@ def create_app(config_class=None):
     from app.services.backend_health import BackendHealth
     app.backend_health = BackendHealth(backend)
 
+    # Thread catalog for the item-barcode labels tab. The CSV ships in
+    # the app/data/ directory; resource_path resolves it correctly for
+    # both PyInstaller bundles and normal execution.
+    from app.services.labels import ThreadCatalog
+    thread_catalog_path = resource_path(os.path.join('data', 'thread_catalog.csv'))
+    app.thread_catalog = ThreadCatalog(thread_catalog_path)
+
     # Register blueprints
     from app.blueprints.auth import auth_bp
     from app.blueprints.shipping import shipping_bp
     from app.blueprints.settings import settings_bp
+    from app.blueprints.labels import labels_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(shipping_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(labels_bp)
 
     # Initialize databases
     from app.models.database import init_all_dbs
