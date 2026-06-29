@@ -218,6 +218,34 @@ class TestShipOrderWithBackend:
         assert resp.get_json()['status'] == 'success'
         assert mock_backend.confirm_shipped.call_args.kwargs['carrier'] == 'USPS'
 
+    def test_ship_order_records_actual_method_when_label_carrier_differs(
+            self, auth_client, mock_backend, mock_shiprush):
+        """stikman28/dockd#6 completion: when the order method names one
+        carrier ("USPS Ground Advantage") but ShipRush returns a 1Z (UPS)
+        label, the ship_method written upstream must reflect the carrier
+        actually used (UPS), not the stale USPS method. b9c4a2d made the
+        carrier follow the tracking; the method string was still passed
+        through unchanged, leaving a USPS method above a 1Z label."""
+        mock_backend.get_order.return_value = _sample_order(so_number='SO-MISMATCH')
+        # mock_shiprush default returns a 1Z (UPS) label for a USPS-named order.
+        mock_backend.confirm_shipped.return_value = ShipResult(
+            status='SHIPPED', tracking='1Z999AA10123456784',
+            shipped_at='2026-05-11T15:30:00Z',
+            fulfillment_id=50, audit_log_id=9005,
+        )
+        resp = auth_client.post('/ship_order', json={
+            'so_number': 'SO-MISMATCH',
+            'box_id': '1',
+            'weight': 1.5,
+        })
+        assert resp.get_json()['status'] == 'success'
+        call = mock_backend.confirm_shipped.call_args
+        # Carrier already follows the tracking (b9c4a2d)...
+        assert call.kwargs['carrier'] == 'UPS'
+        # ...and now the method does too: never a USPS method on a UPS label.
+        assert 'USPS' not in call.kwargs['ship_method']
+        assert call.kwargs['ship_method'] == 'UPS Ground'
+
     def test_ship_order_already_shipped(self, auth_client, mock_backend,
                                         mock_shiprush):
         mock_backend.get_order.return_value = _sample_order(so_number='SO-8')

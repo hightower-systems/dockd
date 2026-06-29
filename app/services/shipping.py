@@ -544,6 +544,19 @@ class ShippingService:
             method_carrier = self.carrier.current_carrier(ship_method_raw)
         sentry_carrier = _carrier_for_writeback(tracking, method_carrier)
 
+        # Reconcile the ship method to the carrier actually used. The
+        # tracking number is authoritative (sentry_carrier); when the
+        # requested method names a different carrier than the label that
+        # was produced, replace it with the canonical method for the
+        # actual carrier so Sentry never records e.g. "USPS Ground
+        # Advantage" above a 1Z UPS label (stikman28/dockd#6 completion).
+        # A method that already agrees with the carrier is left unchanged.
+        actual_ship_method = ship_method_raw
+        _canonical_method = {'UPS': 'UPS Ground', 'USPS': 'USPS Ground Advantage'}
+        if sentry_carrier in _canonical_method:
+            if self.carrier.current_carrier(ship_method_raw) != sentry_carrier:
+                actual_ship_method = _canonical_method[sentry_carrier]
+
         # Confirm ship on Sentry, persisting the attempt before the
         # network call so a crash mid-flight leaves a recoverable row.
         if not idempotency_key:
@@ -553,7 +566,7 @@ class ShippingService:
         confirm_kwargs = {
             'tracking': tracking,
             'carrier': sentry_carrier,
-            'ship_method': ship_method_raw or None,
+            'ship_method': actual_ship_method or None,
             'operator_username': operator_username,
             'shipping_cost': shipping_cost,
             'weight': weight,
