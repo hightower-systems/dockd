@@ -12,7 +12,7 @@ load_dotenv()
 
 
 class Config:
-    VERSION = '1.0.0'
+    VERSION = '1.0.1'
 
     # -- Flask --
     SECRET_KEY = os.environ.get('SECRET_KEY')
