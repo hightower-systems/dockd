@@ -2,7 +2,7 @@
 
 Coordinates an order backend (Sentry-WMS in v0.2.0), ShipRushClient,
 CarrierEngine, PrinterService, LabelCache, and the local
-`ship_history` SQLite table.
+`ship_history` Postgres table.
 
 Sentry is the source of truth for order data and the destination of
 ship / void-ship writes. ShipRush is the label generator (untouched
@@ -416,7 +416,7 @@ class ShippingService:
         Steps: refresh order from backend -> resolve box dims ->
         carrier conflict check -> apply carrier override -> generate
         ShipRush label -> print -> backend.confirm_shipped -> log to
-        local SQLite.
+        local Postgres.
         """
         if self.backend is None:
             return {'status': 'error', 'message': _BACKEND_NOT_WIRED}
@@ -970,37 +970,35 @@ class ShippingService:
         so the local audit trail matches the upstream state. Best-
         effort; an exception here does not fail the void.
         """
-        conn = get_ship_db()
-        try:
-            conn.execute(
-                """UPDATE ship_history
-                      SET voided_at = ?, void_reason = ?
-                    WHERE order_number = ?
-                      AND voided_at IS NULL""",
-                (voided_at or datetime.now().isoformat(),
-                 (reason or 'voided via dockd')[:1000],
-                 so_number),
-            )
+        with get_ship_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE ship_history
+                          SET voided_at = %s, void_reason = %s
+                        WHERE order_number = %s
+                          AND voided_at IS NULL""",
+                    (voided_at or datetime.now(),
+                     (reason or 'voided via dockd')[:1000],
+                     so_number),
+                )
             conn.commit()
-        finally:
-            conn.close()
 
     # ---- audit / stats -------------------------------------------------
 
     def log_override(self, order_number, user, items, station, override_type):
         """Log a manual override to the local audit database."""
         try:
-            conn = get_override_db()
-            for item in items:
-                conn.execute(
-                    "INSERT INTO override_log "
-                    "(order_number, user, item_name, sku, station, override_type) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (order_number, user, item.get('item_name', ''),
-                     item.get('sku', ''), station, override_type),
-                )
-            conn.commit()
-            conn.close()
+            with get_override_db() as conn:
+                with conn.cursor() as cur:
+                    for item in items:
+                        cur.execute(
+                            'INSERT INTO override_log '
+                            '(order_number, "user", item_name, sku, station, override_type) '
+                            'VALUES (%s, %s, %s, %s, %s, %s)',
+                            (order_number, user, item.get('item_name', ''),
+                             item.get('sku', ''), station, override_type),
+                        )
+                conn.commit()
         except Exception as e:
             logger.error("Failed to log override: %s", e)
 
@@ -1052,33 +1050,34 @@ class ShippingService:
                 except Exception:
                     pass
 
-            conn = get_ship_db()
-            conn.execute(
-                """INSERT INTO ship_history
-                   (order_number, fulfillment_id, items_skus, box_id, dims, weight,
-                    shipping_cost, tracking, carrier, ship_method, shipped_by, shipped_at,
-                    ff_created_at, order_loaded_at, fulfillment_age_minutes,
-                    ship_speed_seconds, carrier_switched, station_id, station_label,
-                    external_id, customer_shipping_paid, order_total,
-                    sentry_audit_log_id, sentry_fulfillment_id, manual_link,
-                    idempotency_key, destination_country, customs_value,
-                    customs_currency, hs_codes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (order_number, fulfillment_id, items_skus, effective_box_id,
-                 dims_str, weight, shipping_cost, tracking, final_carrier,
-                 ship_method_raw, current_user,
-                 shipped_at.strftime('%Y-%m-%d %H:%M:%S'),
-                 ff_created_at, order_loaded_at, fulfillment_age_minutes,
-                 ship_speed_seconds, 1 if carrier_switched else 0,
-                 station_id or '', station_label or '',
-                 external_id or '', customer_shipping_paid, order_total,
-                 sentry_audit_log_id, sentry_fulfillment_id,
-                 1 if manual_link else 0, idempotency_key,
-                 destination_country, customs_value, customs_currency,
-                 hs_codes),
-            )
-            conn.commit()
-            conn.close()
+            with get_ship_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO ship_history
+                           (order_number, fulfillment_id, items_skus, box_id, dims, weight,
+                            shipping_cost, tracking, carrier, ship_method, shipped_by, shipped_at,
+                            ff_created_at, order_loaded_at, fulfillment_age_minutes,
+                            ship_speed_seconds, carrier_switched, station_id, station_label,
+                            external_id, customer_shipping_paid, order_total,
+                            sentry_audit_log_id, sentry_fulfillment_id, manual_link,
+                            idempotency_key, destination_country, customs_value,
+                            customs_currency, hs_codes)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (order_number, fulfillment_id, items_skus, effective_box_id,
+                         dims_str, weight, shipping_cost, tracking, final_carrier,
+                         ship_method_raw, current_user,
+                         shipped_at,
+                         ff_created_at or None, order_loaded_at or None,
+                         fulfillment_age_minutes,
+                         ship_speed_seconds, 1 if carrier_switched else 0,
+                         station_id or '', station_label or '',
+                         external_id or '', customer_shipping_paid, order_total,
+                         sentry_audit_log_id, sentry_fulfillment_id,
+                         1 if manual_link else 0, idempotency_key,
+                         destination_country, customs_value, customs_currency,
+                         hs_codes),
+                    )
+                conn.commit()
         except Exception as e:
             logger.warning("Failed to log ship history: %s", e)

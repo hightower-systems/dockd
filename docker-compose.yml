@@ -1,4 +1,20 @@
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dockd
+      POSTGRES_PASSWORD: dockd
+      POSTGRES_DB: dockd
+    ports:
+      - "5434:5432"
+    volumes:
+      - dockd-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dockd"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   dockd:
     build: .
     ports:
@@ -8,4 +24,15 @@ services:
       - ./logs:/app/logs
     env_file:
       - .env
+    environment:
+      # Point at the compose Postgres by service name. Overrides any
+      # DATABASE_URL in .env for the local compose stack; prod / debug
+      # supply their own DATABASE_URL as a container secret.
+      DATABASE_URL: postgresql://dockd:dockd@db:5432/dockd
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  dockd-pgdata:

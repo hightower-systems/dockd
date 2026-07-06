@@ -225,21 +225,8 @@
         </div>
     </div>
 
-    <div id="change-password-overlay" style="display:none; position:fixed; inset:0; background:rgba(20,15,10,0.95); z-index:9999; align-items:center; justify-content:center; color:white;">
-        <div style="background:#2a2520; padding:32px 40px; border-radius:10px; min-width:340px; max-width:420px; text-align:center;">
-            <h2 style="margin:0 0 8px 0; color:#fdf4e3; letter-spacing:1px;">SET A NEW PASSWORD</h2>
-            <p id="change-pw-intro" style="margin:0 0 20px 0; opacity:0.75; font-size:14px;">Your account is using the default password. Choose a new one to continue.</p>
-            <input type="password" id="change-pw-current" placeholder="CURRENT PASSWORD" autocomplete="off"
-                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
-            <input type="password" id="change-pw-new" placeholder="NEW PASSWORD" autocomplete="off"
-                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
-            <input type="password" id="change-pw-confirm" placeholder="CONFIRM NEW PASSWORD" autocomplete="off"
-                style="width:100%; padding:14px; font-size:16px; font-family:inherit; background:rgba(255,255,255,0.08); color:white; border:1px solid rgba(255,255,255,0.15); border-radius:6px; margin-bottom:10px;">
-            <div id="change-pw-error" style="color:#fca5a5; font-weight:700; font-size:13px; min-height:18px; margin-bottom:10px;"></div>
-            <button onclick="submitPasswordChange()" style="background:#8e2716; color:white; border:none; padding:14px 32px; font-size:16px; font-weight:800; border-radius:6px; cursor:pointer; width:100%;">UPDATE PASSWORD</button>
-            <p style="font-size:11px; opacity:0.45; margin:14px 0 0 0;">Sign out via the sidebar to abort.</p>
-        </div>
-    </div>
+    <!-- Password change lives in Sentry (the identity provider); Dockd
+         has no forced-password-change overlay. -->
 
     <!-- ====== SHIP ORDERS MODALS ====== -->
     <div id="choice-modal" class="modal-overlay">
@@ -1085,11 +1072,7 @@
             document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
             document.getElementById('display-user').innerText = currentUser.name;
             applyAdminVisibility(currentUser);
-            if (currentUser.must_change_password) {
-                openChangePasswordOverlay('');
-            } else {
-                showShipOrders();
-            }
+            showShipOrders();
         })();
         {% endif %}
 
@@ -1116,11 +1099,7 @@
                     document.getElementById('login-overlay').style.transform = 'translateY(-100%)';
                     document.getElementById('display-user').innerText = currentUser.name;
                     applyAdminVisibility(currentUser);
-                    if (currentUser.must_change_password) {
-                        openChangePasswordOverlay(pw);
-                    } else {
-                        showShipOrders();
-                    }
+                    showShipOrders();
                 } else {
                     document.getElementById('login-error').textContent = data.message || "Invalid credentials";
                     document.getElementById('pass-input').value = '';
@@ -1128,44 +1107,8 @@
             });
         }
 
-        function openChangePasswordOverlay(prefillCurrent) {
-            const overlay = document.getElementById('change-password-overlay');
-            overlay.style.display = 'flex';
-            document.getElementById('change-pw-error').textContent = '';
-            const current = document.getElementById('change-pw-current');
-            current.value = prefillCurrent || '';
-            document.getElementById('change-pw-new').value = '';
-            document.getElementById('change-pw-confirm').value = '';
-            (prefillCurrent ? document.getElementById('change-pw-new') : current).focus();
-        }
-
-        function submitPasswordChange() {
-            const cur = document.getElementById('change-pw-current').value;
-            const next = document.getElementById('change-pw-new').value;
-            const confirmPw = document.getElementById('change-pw-confirm').value;
-            const errEl = document.getElementById('change-pw-error');
-            errEl.textContent = '';
-            if (!cur || !next) { errEl.textContent = 'All fields required.'; return; }
-            if (next.length < 4) { errEl.textContent = 'New password must be at least 4 characters.'; return; }
-            if (next !== confirmPw) { errEl.textContent = 'New passwords do not match.'; return; }
-            if (next === cur) { errEl.textContent = 'New password must differ from the current one.'; return; }
-            fetch('/api/change-password', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ current_password: cur, new_password: next }),
-            })
-            .then(r => r.json().then(body => ({ ok: r.ok, body })))
-            .then(({ ok, body }) => {
-                if (ok && body.status === 'ok') {
-                    document.getElementById('change-password-overlay').style.display = 'none';
-                    if (currentUser) currentUser.must_change_password = false;
-                    applyAdminVisibility(currentUser);
-                    showShipOrders();
-                } else {
-                    errEl.textContent = body.message || 'Could not update password.';
-                }
-            })
-            .catch(() => { errEl.textContent = 'Network error. Try again.'; });
-        }
+        // Password change is handled in Sentry (the identity provider);
+        // Dockd has no password-change overlay.
 
         function logout() {
             fetch('/logout', {method: 'POST'});

@@ -81,23 +81,27 @@ def create_app(config_class=None):
     # Extensions
     limiter.init_app(app)
 
-    # Settings + user stores. JSON files at project root by default;
-    # override locations with SETTINGS_PATH / USERS_PATH env vars (used
-    # by tests and Azure volume mounts).
-    from app.services.settings import SettingsStore
-    from app.services.users_store import UsersStore
+    # Postgres connection pool. Schema is owned by Alembic (alembic upgrade
+    # head runs at container boot); the Postgres-backed stores below need
+    # the pool ready, so initialize it first.
+    from app.models.database import init_pool
+    init_pool(maxconn=config.DB_POOL_MAX)
 
+    # Settings are Postgres-backed (Phase 2c). Identity is Sentry's: /login
+    # verifies against Sentry's auth API, so Dockd has no user store. Only
+    # the .env secrets surface and the local label cache stay on disk.
+    from app.services.settings import SettingsStore
+    from app.services.sentry_auth import SentryAuthenticator
+
+    app.settings_store = SettingsStore()
+    # Reuse the same Sentry host the order backend targets. Empty until
+    # configured; login then returns 503 (identity provider unreachable).
+    sentry_base_url = (os.environ.get('SENTRY_BASE_URL') or '').strip()
+    app.sentry_auth = SentryAuthenticator(base_url=sentry_base_url)
+
+    # Filesystem-backed local artifacts (label cache + raw label history).
+    # 8h-ephemeral by design; DATA_DIR points them at a mount in prod.
     data_dir = os.environ.get('DATA_DIR') or os.getcwd()
-    settings_path = os.environ.get(
-        'SETTINGS_PATH',
-        os.path.join(data_dir, 'settings.json'),
-    )
-    users_path = os.environ.get(
-        'USERS_PATH',
-        os.path.join(data_dir, 'users.json'),
-    )
-    app.settings_store = SettingsStore(settings_path)
-    app.users_store = UsersStore(users_path)
 
     # Build services (bottom-up, no import-time side effects)
     from app.services.label_cache import LabelCache
@@ -163,10 +167,6 @@ def create_app(config_class=None):
     app.register_blueprint(shipping_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(labels_bp)
-
-    # Initialize databases
-    from app.models.database import init_all_dbs
-    init_all_dbs()
 
     # Crash-recovery: retry any ship_attempts rows that the previous
     # process left mid-flight. Opt-in via env so test boots and CI do

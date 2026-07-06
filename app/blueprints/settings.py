@@ -1,8 +1,9 @@
 """Settings blueprint.
 
-Admin-gated CRUD on operational settings (settings.json) and user
-records (users.json), plus a small writable surface for the secrets
-that live in .env.
+Admin-gated CRUD on operational settings (the Postgres `dockd_settings`
+table), plus a small writable surface for the secrets that live in .env.
+User management lives in Sentry (the identity provider); Dockd has no
+user store.
 
 Public endpoints (logged-in, any role):
     GET  /api/settings/public   -- subset the operator UI needs
@@ -12,11 +13,6 @@ Admin endpoints:
     PUT    /api/settings                -- replace settings wholesale
     PATCH  /api/settings                -- merge partial update
     POST   /api/settings/secrets        -- write .env keys + reload env
-    GET    /api/users                   -- list (username, role)
-    POST   /api/users                   -- add user
-    DELETE /api/users/<username>        -- remove user
-    PUT    /api/users/<username>/password
-    PUT    /api/users/<username>/role
     GET    /settings                    -- HTML settings page
 """
 
@@ -27,7 +23,6 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 from dotenv import set_key, find_dotenv
 
 from app.blueprints.auth import admin_required, login_required
-from app.services.users_store import UsersStoreError
 
 logger = logging.getLogger('dockd.settings')
 
@@ -71,10 +66,6 @@ def public_settings():
 @admin_required
 def settings_page():
     user = session.get('user') or {}
-    if user.get('must_change_password'):
-        # Bounce back to root; the index page renders the forced
-        # password-change overlay before anything else is reachable.
-        return '<script>window.location.href="/"</script>'
     return render_template('settings.html', current_user=user)
 
 
@@ -154,59 +145,6 @@ def secrets_presence():
     })
 
 
-# -------------------- admin: users ---------------------------------------
-
-
-@settings_bp.route('/api/users', methods=['GET'])
-@admin_required
-def list_users():
-    return jsonify(current_app.users_store.list_users())
-
-
-@settings_bp.route('/api/users', methods=['POST'])
-@admin_required
-def add_user():
-    body = request.get_json(silent=True) or {}
-    try:
-        result = current_app.users_store.add_user(
-            username=body.get('username', ''),
-            password=body.get('password', ''),
-            role=body.get('role', 'user'),
-        )
-    except UsersStoreError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
-    return jsonify({'status': 'ok', 'user': result})
-
-
-@settings_bp.route('/api/users/<username>', methods=['DELETE'])
-@admin_required
-def delete_user(username):
-    if username == session.get('user', {}).get('name'):
-        return jsonify({'status': 'error', 'message': 'cannot delete yourself'}), 400
-    try:
-        current_app.users_store.remove_user(username)
-    except UsersStoreError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
-    return jsonify({'status': 'ok'})
-
-
-@settings_bp.route('/api/users/<username>/password', methods=['PUT'])
-@admin_required
-def reset_password(username):
-    body = request.get_json(silent=True) or {}
-    try:
-        current_app.users_store.set_password(username, body.get('password', ''))
-    except UsersStoreError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
-    return jsonify({'status': 'ok'})
-
-
-@settings_bp.route('/api/users/<username>/role', methods=['PUT'])
-@admin_required
-def set_role(username):
-    body = request.get_json(silent=True) or {}
-    try:
-        current_app.users_store.set_role(username, body.get('role', 'user'))
-    except UsersStoreError as exc:
-        return jsonify({'status': 'error', 'message': str(exc)}), 400
-    return jsonify({'status': 'ok'})
+# User management moved to Sentry (the identity provider). Dockd no longer
+# stores users or exposes user CRUD -- see app/services/sentry_auth.py and
+# the login flow in app/blueprints/auth.py.

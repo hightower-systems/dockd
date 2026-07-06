@@ -66,82 +66,8 @@ class TestSettingsPatch:
         assert resp.status_code == 400
 
 
-class TestUsersAPI:
-
-    def test_list_users_blocks_user(self, auth_client):
-        resp = auth_client.get('/api/users')
-        assert resp.status_code == 403
-
-    def test_list_users_admin(self, admin_client):
-        resp = admin_client.get('/api/users')
-        assert resp.status_code == 200
-        usernames = [u['username'] for u in resp.get_json()]
-        assert 'admin' in usernames
-
-    def test_add_then_remove_user(self, admin_client):
-        resp = admin_client.post('/api/users', json={
-            'username': 'temp_user', 'password': 'pw1234', 'role': 'user',
-        })
-        assert resp.status_code == 200
-        resp2 = admin_client.delete('/api/users/temp_user')
-        assert resp2.status_code == 200
-
-    def test_cannot_delete_self(self, admin_client):
-        resp = admin_client.delete('/api/users/admin')
-        # The admin session name is 'admin' in admin_client fixture; the
-        # self-delete check should fire before the last-admin check.
-        assert resp.status_code == 400
-
-
-class TestForcedPasswordChange:
-
-    def test_gate_blocks_other_endpoints(self, client, app):
-        """When a session is flagged for password change, every
-        endpoint except the allow-list returns 403 with the flag set."""
-        store = app.users_store
-        store.add_user('forced', 'first123', 'user', must_change_password=True)
-        try:
-            with client.session_transaction() as sess:
-                sess['user'] = {'name': 'forced', 'role': 'user', 'must_change_password': True}
-            resp = client.get('/get_order_details?ticket=SO1')
-            assert resp.status_code == 403
-            body = resp.get_json()
-            assert body['must_change_password'] is True
-        finally:
-            store.remove_user('forced')
-
-    def test_change_password_endpoint(self, client, app):
-        store = app.users_store
-        store.add_user('rotator', 'first123', 'user', must_change_password=True)
-        try:
-            with client.session_transaction() as sess:
-                sess['user'] = {'name': 'rotator', 'role': 'user', 'must_change_password': True}
-            # Allowed during forced-change state.
-            resp = client.post('/api/change-password', json={
-                'current_password': 'first123',
-                'new_password': 'second456',
-            })
-            assert resp.status_code == 200
-            assert store.verify('rotator', 'second456')['must_change_password'] is False
-            # Subsequent ordinary endpoints should now respond.
-            resp2 = client.get('/api/settings/public')
-            assert resp2.status_code == 200
-        finally:
-            store.remove_user('rotator')
-
-    def test_change_password_wrong_current_rejected(self, client, app):
-        store = app.users_store
-        store.add_user('rotator2', 'first123', 'user', must_change_password=True)
-        try:
-            with client.session_transaction() as sess:
-                sess['user'] = {'name': 'rotator2', 'role': 'user', 'must_change_password': True}
-            resp = client.post('/api/change-password', json={
-                'current_password': 'WRONG',
-                'new_password': 'second456',
-            })
-            assert resp.status_code == 400
-        finally:
-            store.remove_user('rotator2')
+# User CRUD and forced-password-change moved to Sentry (the identity
+# provider); Dockd no longer exposes /api/users or /api/change-password.
 
 
 class TestOverrideSkusPatch:

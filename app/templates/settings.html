@@ -127,7 +127,6 @@
         <button data-pane="amazon">Amazon methods</button>
         <button data-pane="overrides">Override SKUs</button>
         <button data-pane="international">International</button>
-        <button data-pane="users">Users</button>
         <button data-pane="secrets">Secrets (.env)</button>
     </nav>
 
@@ -392,28 +391,8 @@
             </div>
         </section>
 
-        <!-- USERS -->
-        <section id="pane-users" class="tab-pane">
-            <div class="card">
-                <h2>Users</h2>
-                <p class="help">Admin can do everything (including settings); user can ship only. Credentials are local to dockd.</p>
-                <table id="users-table">
-                    <thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div class="card">
-                <h2>Add user</h2>
-                <div class="row">
-                    <div class="field"><label>Username</label><input id="new-username" type="text" /></div>
-                    <div class="field"><label>Password</label><input id="new-password" type="password" /></div>
-                    <div class="field"><label>Role</label>
-                        <select id="new-role"><option value="user">user</option><option value="admin">admin</option></select>
-                    </div>
-                    <button class="primary" onclick="addUser()">Add user</button>
-                </div>
-            </div>
-        </section>
+        <!-- Users are managed in Sentry (the identity provider); Dockd has
+             no local user store, so there is no Users pane here. -->
 
         <!-- SECRETS -->
         <section id="pane-secrets" class="tab-pane">
@@ -903,81 +882,8 @@
             }
         });
 
-        // -------- users --------
-        async function renderUsers() {
-            const tbody = document.querySelector('#users-table tbody');
-            tbody.innerHTML = '';
-            const users = await getJSON('/api/users');
-            users.forEach(u => {
-                const tr = el('tr');
-                const roleSel = el('select');
-                ['user', 'admin'].forEach(r => roleSel.append(el('option', { value: r }, r)));
-                roleSel.value = u.role;
-                roleSel.addEventListener('change', async () => {
-                    try {
-                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}/role`, {
-                            method: 'PUT', credentials: 'same-origin',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ role: roleSel.value }),
-                        });
-                        const body = await r.json();
-                        if (!r.ok) throw new Error(body.message);
-                        showStatus('Role updated');
-                    } catch (e) { showStatus(e.message, true); renderUsers(); }
-                });
-                const pwBtn = el('button', { class: 'secondary', onclick: async () => {
-                    const pw = prompt(`New password for ${u.username}`);
-                    if (!pw) return;
-                    try {
-                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}/password`, {
-                            method: 'PUT', credentials: 'same-origin',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ password: pw }),
-                        });
-                        const body = await r.json();
-                        if (!r.ok) throw new Error(body.message);
-                        showStatus('Password updated');
-                    } catch (e) { showStatus(e.message, true); }
-                } }, 'reset password');
-                const delBtn = el('button', { class: 'danger', onclick: async () => {
-                    if (!confirm(`Delete user "${u.username}"?`)) return;
-                    try {
-                        const r = await fetch(`/api/users/${encodeURIComponent(u.username)}`, {
-                            method: 'DELETE', credentials: 'same-origin',
-                        });
-                        const body = await r.json();
-                        if (!r.ok) throw new Error(body.message);
-                        showStatus('User deleted');
-                        renderUsers();
-                    } catch (e) { showStatus(e.message, true); }
-                } }, 'delete');
-                tr.append(
-                    el('td', {}, u.username),
-                    el('td', {}, roleSel),
-                    el('td', {}, pwBtn, ' ', delBtn),
-                );
-                tbody.append(tr);
-            });
-        }
-        async function addUser() {
-            const username = document.getElementById('new-username').value.trim();
-            const password = document.getElementById('new-password').value;
-            const role = document.getElementById('new-role').value;
-            if (!username || !password) { showStatus('username + password required', true); return; }
-            try {
-                const r = await fetch('/api/users', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password, role }),
-                });
-                const body = await r.json();
-                if (!r.ok) throw new Error(body.message);
-                showStatus('User added');
-                document.getElementById('new-username').value = '';
-                document.getElementById('new-password').value = '';
-                renderUsers();
-            } catch (e) { showStatus(e.message, true); }
-        }
+        // Users are managed in Sentry (the identity provider); Dockd has no
+        // user CRUD.
 
         // -------- secrets --------
         async function renderSecrets() {
@@ -1025,7 +931,7 @@
                 settings = await getJSON('/api/settings');
                 renderBoxes(); renderFedex(); renderCarrier(); renderStations();
                 renderOrigin(); renderShipRush(); renderAmazon(); renderOverrides();
-                renderInternational(); renderUsers(); renderSecrets();
+                renderInternational(); renderSecrets();
             } catch (e) {
                 showStatus('Load failed: ' + e.message, true);
             }
