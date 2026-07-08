@@ -21,6 +21,7 @@ from app.services.sentry_auth import (
     AccountLocked,
     InvalidCredentials,
     MustChangePassword,
+    NotAuthorizedForDockd,
     ProviderUnavailable,
 )
 
@@ -135,6 +136,11 @@ def login():
             'status': 'error',
             'message': 'You must change your password in Sentry before using Dockd.',
         }), 403
+    except NotAuthorizedForDockd:
+        return jsonify({
+            'status': 'error',
+            'message': 'This account is not authorized to ship from the pack station.',
+        }), 403
     except AccountLocked as exc:
         return jsonify({'status': 'error', 'message': exc.message}), 429
     except InvalidCredentials:
@@ -145,6 +151,10 @@ def login():
             'message': 'Login is temporarily unavailable (identity provider unreachable).',
         }), 503
 
+    # Mark the session permanent so PERMANENT_SESSION_LIFETIME (the hard 8h
+    # cap, not refreshed per request) applies -- otherwise a kiosk browser
+    # that never closes would hold the session, and its frozen role, forever.
+    session.permanent = True
     session['user'] = {'name': user['name'], 'role': user['role']}
     return jsonify({'status': 'success', 'user': session['user']})
 

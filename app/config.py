@@ -22,13 +22,20 @@ class Config:
         SECRET_KEY = 'CHANGE_ME_BEFORE_PRODUCTION'
     PORT = int(os.environ.get('PORT', 5001))
     DEBUG = os.environ.get('DEBUG', 'false').lower() == 'true'
+    # Hard cap on a logged-in session, matching the 8h lifetime of the Sentry
+    # JWT that authorized the login. The session expires this long after login
+    # regardless of activity (SESSION_REFRESH_EACH_REQUEST is off), so a
+    # deactivation in Sentry takes effect within a shift on a kiosk browser
+    # that never closes.
+    SESSION_LIFETIME_HOURS = int(os.environ.get('DOCKD_SESSION_LIFETIME_HOURS', 8))
 
     # -- Database --
     # Dockd's operational tables (ship_history, ship_attempts, override_log)
-    # live in Postgres. Set DATABASE_URL to a libpq DSN, e.g.
-    # postgresql://dockd_app:...@host:5432/dockd. Required at runtime; the
-    # connection pool raises on first use when it is unset.
-    DATABASE_URL = os.environ.get('DATABASE_URL', '')
+    # live in Postgres. The DSN comes from the DATABASE_URL env var, read where
+    # it is used -- the connection pool (app/models/database.py) and alembic
+    # both read it directly and fail loud when it is unset. This is the single
+    # env reader for the pool ceiling below.
+    #
     # Per-container pool ceiling. Single register / single replica, so a
     # small pool is plenty; sized against Postgres max_connections shared
     # with the Sentry stack.

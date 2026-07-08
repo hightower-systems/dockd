@@ -32,11 +32,20 @@ the rest of the platform.
   shared `ThreadedConnectionPool`. The crash-recovery idempotency contract
   is intact: a duplicate idempotency key still raises (now psycopg2
   `UniqueViolation`, a subclass of the old `IntegrityError`).
+- **Pool hardening.** Connections carry TCP keepalives + a connect timeout,
+  and every checkout is probed live -- a connection the server dropped while
+  idle is discarded and a working one handed back, so a post-label
+  `ship_history` / `override_log` write (whose failure is swallowed) never
+  lands on a dead socket. The rollback on the error path is guarded so a
+  dead-connection rollback cannot mask the caller's real exception.
 - **Operational settings** live in `dockd_settings` -- one JSONB row per
   top-level key, merged over the defaults, read fresh per request. The
   `SettingsStore` interface is unchanged, so every service that reads
   settings is untouched. Secrets that were inline in the JSON stay inline
-  in the table, still hidden from non-admin callers by `public_subset`.
+  in the table, still hidden from non-admin callers by `public_subset`. The
+  ~14 settings reads a single ship makes now share one query per request
+  (cached on `flask.g`), keeping the read-fresh contract at a fraction of the
+  cost.
 
 ### Changed -- authentication (Sentry SSO)
 
@@ -48,6 +57,18 @@ the rest of the platform.
   a "change it in Sentry" message instead of carrying its own rotation).
   Ship / void backend calls are unchanged -- they keep using the service
   `X-WMS-Token`.
+- **Ship authorization.** A non-ADMIN Sentry account must hold the `ship`
+  function (from the login response's `allowed_functions`) to use the pack
+  station; ADMIN is exempt. Restores the explicitly-granted model the JSON
+  user store had.
+- **Session lifetime.** The login session is now a hard-capped 8h cookie
+  (permanent, not refreshed per request), matching the Sentry JWT that
+  authorized it, so a deactivation in Sentry takes effect within a shift on a
+  kiosk browser that never closes.
+- **Operator IP behind the proxy.** With `TRUST_PROXY=true` set on the ACA
+  deploy, `X-Forwarded-For` is honored so the real operator IP -- not the
+  shared ingress address -- keys Sentry's lockout and the `/login` rate
+  limiter. Off by default to avoid trusting spoofable headers off-proxy.
 
 ### Removed
 

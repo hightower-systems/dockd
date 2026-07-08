@@ -60,3 +60,39 @@ class TestSettingsStore:
         assert store.is_country_banned('ir') is True
         assert store.is_country_banned('US') is False
         assert store.is_country_banned(None) is False
+
+
+class TestSettingsRequestCache:
+    """A single ship reads settings ~14 times; those reads share one query
+    per request via a flask.g snapshot, without leaking across requests."""
+
+    def test_all_is_cached_within_a_request(self, app, store):
+        with app.test_request_context():
+            first = store.all()
+            second = store.all()
+            # Same object -> the second read hit the g cache, not the DB.
+            assert first is second
+
+    def test_get_shares_the_request_cache(self, app, store):
+        with app.test_request_context():
+            snapshot = store.all()
+            # get() serves from the same cached snapshot.
+            assert store.get('high_value_threshold') is snapshot['high_value_threshold']
+
+    def test_cache_does_not_leak_across_requests(self, app, store):
+        with app.test_request_context():
+            a = store.all()
+        with app.test_request_context():
+            b = store.all()
+        assert a is not b
+
+    def test_no_cache_outside_request_context(self, store):
+        # No request -> no g to cache on -> every call queries fresh.
+        assert store.all() is not store.all()
+
+    def test_write_invalidates_the_request_cache(self, app, store):
+        with app.test_request_context():
+            store.all()  # prime the cache
+            store.patch({'high_value_threshold': 4242})
+            # Post-write read in the same request reflects the write.
+            assert store.all()['high_value_threshold'] == 4242

@@ -8,6 +8,7 @@ from app.services.sentry_auth import (
     AccountLocked,
     InvalidCredentials,
     MustChangePassword,
+    NotAuthorizedForDockd,
     ProviderUnavailable,
 )
 
@@ -51,6 +52,48 @@ class TestLogin:
         resp = client.post('/login', json={'username': 'x', 'password': 'pw'})
         assert resp.status_code == 503
         assert resp.get_json()['status'] == 'error'
+
+    def test_login_not_authorized_for_dockd_blocked(self, client, mock_sentry_auth):
+        # A USER without the `ship` grant is refused by the authenticator; the
+        # blueprint surfaces it as a 403.
+        mock_sentry_auth.login.side_effect = NotAuthorizedForDockd()
+        resp = client.post('/login', json={'username': 'picker', 'password': 'pw'})
+        assert resp.status_code == 403
+        assert 'ship' in resp.get_json()['message'].lower()
+
+    def test_login_sets_hard_capped_session_cookie(self, client, mock_sentry_auth):
+        # A successful login is a permanent session with the 8h hard cap, so
+        # the session cookie is bounded (carries an Expires ~8h out) rather
+        # than being an unbounded browser-session cookie.
+        from datetime import datetime, timedelta, timezone
+        from email.utils import parsedate_to_datetime
+
+        mock_sentry_auth.login.return_value = {'name': 'TestUser', 'role': 'user'}
+        resp = client.post('/login', json={'username': 'TestUser', 'password': 'pw'})
+        set_cookies = resp.headers.getlist('Set-Cookie')
+        session_cookie = next(c for c in set_cookies if c.startswith('session='))
+        assert 'Expires=' in session_cookie  # bounded, not a session cookie
+        expires = parsedate_to_datetime(
+            session_cookie.split('Expires=')[1].split(';')[0]
+        )
+        delta = expires - datetime.now(timezone.utc)
+        assert timedelta(hours=7, minutes=59) <= delta <= timedelta(hours=8, minutes=1)
+
+
+class TestSessionConfig:
+
+    def test_session_is_hard_capped_not_sliding(self, app):
+        from datetime import timedelta
+        # Hard 8h cap: permanent + fixed lifetime + NOT refreshed each request,
+        # so a kiosk session expires 8h after login regardless of activity.
+        assert app.config['PERMANENT_SESSION_LIFETIME'] == timedelta(hours=8)
+        assert app.config['SESSION_REFRESH_EACH_REQUEST'] is False
+
+    def test_proxyfix_off_unless_trusted(self, app):
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        # Footgun-safe default: proxy headers are NOT trusted unless the deploy
+        # opts in with TRUST_PROXY (the test app does not set it).
+        assert not isinstance(app.wsgi_app, ProxyFix)
 
 
 class TestLogout:

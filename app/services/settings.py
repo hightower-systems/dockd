@@ -25,12 +25,21 @@ access control.
 import logging
 from typing import Any, Dict, Optional
 
+from flask import g, has_request_context
 from psycopg2.extras import Json
 
 from app.models.database import get_db
 from app.services.default_settings import DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION
 
 logger = logging.getLogger('dockd.settings')
+
+# flask.g key for the per-request settings snapshot. A single ship touches
+# settings ~14 times (ShipRush, CarrierEngine, PrinterService, ...); caching
+# the merged dict on g collapses that to one query per request while keeping
+# the read-fresh-each-request contract (g is cleared between requests, and a
+# write in-request invalidates it). Reads outside a request context (boot
+# seeding, background threads) skip the cache and query directly.
+_G_CACHE_KEY = '_dockd_settings_all'
 
 
 class SettingsStore:
@@ -59,23 +68,35 @@ class SettingsStore:
     # ---- reads ---------------------------------------------------------
 
     def all(self) -> Dict[str, Any]:
-        """Full settings dict: stored rows merged over the defaults."""
+        """Full settings dict: stored rows merged over the defaults.
+
+        Within a request the merged dict is cached on flask.g and returned as
+        the same object on subsequent calls, so treat it read-only (callers
+        already do). Outside a request context it always queries fresh.
+        """
+        if has_request_context():
+            cached = g.get(_G_CACHE_KEY)
+            if cached is not None:
+                return cached
         merged = dict(DEFAULT_SETTINGS)
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT key, value FROM dockd_settings")
                 for row in cur.fetchall():
                     merged[row['key']] = row['value']
+        if has_request_context():
+            setattr(g, _G_CACHE_KEY, merged)
         return merged
 
     def get(self, key: str, default: Any = None) -> Any:
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT value FROM dockd_settings WHERE key = %s", (key,))
-                row = cur.fetchone()
-        if row is not None:
-            return row['value']
-        return DEFAULT_SETTINGS.get(key, default)
+        # Serve from the merged snapshot (defaults + stored), so repeated
+        # reads in one request share a single query. The merge means a key
+        # present in the defaults or the stored rows is found here; anything
+        # in neither falls back to the caller's default.
+        data = self.all()
+        if key in data:
+            return data[key]
+        return default
 
     def public_subset(self) -> Dict[str, Any]:
         """Return the subset safe to expose to non-admin (logged-in) UI.
@@ -146,6 +167,11 @@ class SettingsStore:
                         (key, Json(value)),
                     )
             conn.commit()
+        # Drop the per-request snapshot so a read after this write in the same
+        # request (e.g. replace()/patch() calling all() to return the result)
+        # reflects what was just written rather than the pre-write cache.
+        if has_request_context():
+            g.pop(_G_CACHE_KEY, None)
 
 
 __all__ = ['SettingsStore']

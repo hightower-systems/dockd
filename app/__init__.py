@@ -3,7 +3,10 @@
 import logging
 import os
 import sys
+from datetime import timedelta
+
 from flask import Flask, g, has_request_context
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from app.config import Config
 from app.extensions import limiter
@@ -41,12 +44,14 @@ def _resolve_sentry_token():
     return (os.environ.get('DOCKD_SENTRY_TOKEN') or '').strip()
 
 
-def _build_backend(config):
+def _build_backend(config, sentry_base_url):
     """Construct the order backend chosen by env (BACKEND=sentry).
 
     Returns None when no backend is configured; ShippingService surfaces
     a structured "backend not configured" error on every order-touching
-    route in that state.
+    route in that state. ``sentry_base_url`` is resolved once by the caller
+    (the same value the login authenticator uses) so the app factory reads
+    SENTRY_BASE_URL from the environment in exactly one place.
     """
     log = logging.getLogger('dockd')
     backend_name = (os.environ.get('BACKEND') or '').strip().lower()
@@ -54,7 +59,7 @@ def _build_backend(config):
         log.info("No BACKEND env set; order-routing endpoints disabled.")
         return None
     if backend_name == 'sentry':
-        base_url = (os.environ.get('SENTRY_BASE_URL') or '').strip()
+        base_url = sentry_base_url
         if not base_url:
             log.warning(
                 "BACKEND=sentry but SENTRY_BASE_URL is empty; falling back "
@@ -74,8 +79,36 @@ def create_app(config_class=None):
     logger = setup_logging(log_dir=config.LOG_DIR, level=config.LOG_LEVEL)
 
     app = Flask(__name__, template_folder=resource_path('templates'))
+    # Behind Azure Container Apps ingress (one proxy hop), trust X-Forwarded-*
+    # so request.remote_addr is the operator's real IP, not the shared ingress
+    # address. That makes the X-Forwarded-For Dockd forwards to Sentry's
+    # (IP, username) lockout accurate and stops the /login rate limiter from
+    # bucketing every station onto one address.
+    #
+    # Gated behind TRUST_PROXY (default off), mirroring Sentry's opt-in
+    # posture: honoring these headers when NOT behind a trusted proxy lets any
+    # client on the LAN forge its own IP -- the well-known ProxyFix footgun.
+    # The operator sets TRUST_PROXY=true only where the ingress controls the
+    # network (the ACA deploy).
+    trust_proxy = os.environ.get('TRUST_PROXY', '').lower() in ('true', '1', 'yes')
+    if trust_proxy:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+    logger.warning(
+        "ProxyFix %s",
+        "active: trusting X-Forwarded-* (TRUST_PROXY set)" if trust_proxy
+        else "inactive: not trusting proxy headers (TRUST_PROXY unset)",
+    )
     app.secret_key = config.SECRET_KEY
-    app.config['SESSION_PERMANENT'] = False
+    # A logged-in session is a hard-capped cookie: it expires
+    # SESSION_LIFETIME_HOURS after login and is NOT refreshed per request, so a
+    # kiosk browser that never closes still forces re-auth (re-checking
+    # Sentry's is_active) within a shift. login() sets session.permanent so the
+    # lifetime applies to the session it creates.
+    app.config['SESSION_PERMANENT'] = True
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+        hours=config.SESSION_LIFETIME_HOURS
+    )
+    app.config['SESSION_REFRESH_EACH_REQUEST'] = False
     app.config['VERSION'] = config.VERSION
 
     # Extensions
@@ -131,7 +164,7 @@ def create_app(config_class=None):
     # unset / empty / unknown value leaves backend=None and the
     # load_order / ship_order / manual_link / void(write-back) routes
     # return a structured "backend not configured" error.
-    backend = _build_backend(config)
+    backend = _build_backend(config, sentry_base_url)
     app.shipping_service = ShippingService(
         backend=backend,
         shiprush=shiprush,

@@ -42,12 +42,22 @@ class MustChangePassword(AuthError):
     Dockd has no password UI, so the operator rotates in Sentry first."""
 
 
+class NotAuthorizedForDockd(AuthError):
+    """Credentials are valid but the account is not granted the ``ship``
+    function in Sentry, so it may not use the pack station. ADMIN accounts
+    are exempt (they hold every function implicitly)."""
+
+
 class ProviderUnavailable(AuthError):
     """Sentry could not be reached / returned an unexpected status."""
 
 
 # Sentry roles are uppercase; Dockd sessions/frontend use lowercase.
 _ROLE_MAP = {'ADMIN': 'admin', 'USER': 'user'}
+
+# The Sentry allowed_functions grant that authorizes shipping from the pack
+# station. Non-ADMIN accounts must carry it to log in; ADMIN is exempt.
+_SHIP_FUNCTION = 'ship'
 
 
 class SentryAuthenticator:
@@ -104,6 +114,15 @@ class SentryAuthenticator:
             if user.get('must_change_password'):
                 raise MustChangePassword()
             role = _ROLE_MAP.get((user.get('role') or '').upper(), 'user')
+            # Honor Sentry's per-function grants: a non-ADMIN account must
+            # explicitly hold the `ship` function to use the pack station.
+            # ADMIN is exempt (holds every function). Today every operator is
+            # ADMIN, so this gates nothing yet -- it is the correct behavior
+            # the moment a scoped (e.g. pick-only) USER account is created.
+            if role != 'admin':
+                allowed = user.get('allowed_functions') or []
+                if _SHIP_FUNCTION not in allowed:
+                    raise NotAuthorizedForDockd()
             return {'name': user.get('username') or username, 'role': role}
 
         if resp.status_code == 401:
@@ -127,5 +146,6 @@ __all__ = [
     'InvalidCredentials',
     'AccountLocked',
     'MustChangePassword',
+    'NotAuthorizedForDockd',
     'ProviderUnavailable',
 ]

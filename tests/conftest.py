@@ -94,6 +94,12 @@ class _ProxyConn:
     def rollback(self):
         self._real.rollback()
 
+    @property
+    def closed(self):
+        # get_db() checks this before returning a connection to the pool;
+        # mirror the real connection so the double is faithful.
+        return self._real.closed
+
 
 class _FakePool:
     """Minimal ThreadedConnectionPool stand-in that always hands back the

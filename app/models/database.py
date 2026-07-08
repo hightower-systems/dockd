@@ -31,6 +31,32 @@ logger = logging.getLogger('dockd.database')
 _pool = None
 _pool_lock = threading.Lock()
 
+# TCP keepalives so the OS reaps and re-establishes a connection the server
+# (or the Azure Files / Container Apps ingress path) silently dropped while
+# idle, instead of handing a caller a dead socket. connect_timeout bounds a
+# hung connect. These are libpq connection keywords, applied to every pooled
+# connection.
+_KEEPALIVE_KWARGS = {
+    'keepalives': 1,
+    'keepalives_idle': 30,
+    'keepalives_interval': 10,
+    'keepalives_count': 3,
+    'connect_timeout': 10,
+}
+
+# Fallback pool ceiling for the lazy _get_pool() path only. The real entry
+# (the app factory) passes config.DB_POOL_MAX, which is the single reader of
+# the DOCKD_DB_POOL_MAX env var; this constant just keeps a no-arg init_pool()
+# safe.
+_DEFAULT_POOL_MAX = 5
+
+# How many pooled connections get_db() will cycle through looking for a live
+# one before giving up. A dropped-but-not-yet-detected connection is discarded
+# and the next is tried; a fresh connect (the pool grows to maxconn on demand)
+# ends the loop. Only every connection being dead -- i.e. the server is truly
+# unreachable -- exhausts this, which is the loud failure we want.
+_MAX_CHECKOUT_TRIES = 3
+
 
 def _database_url() -> str:
     url = (os.environ.get('DATABASE_URL') or '').strip()
@@ -48,17 +74,20 @@ def init_pool(minconn: int = 1, maxconn: int = None):
     Flask runs ``threaded=True`` and every service opens a connection per
     operation, so a ``ThreadedConnectionPool`` is the right shape: it hands
     the same small set of connections back and forth across worker threads.
-    Called once from the app factory; safe to call again (no-op after the
-    first).
+    Called once from the app factory with ``config.DB_POOL_MAX`` (the single
+    reader of the ``DOCKD_DB_POOL_MAX`` env var); safe to call again (no-op
+    after the first). The lazy fallback below only runs if a caller reaches
+    the pool before the factory sized it.
     """
     global _pool
     with _pool_lock:
         if _pool is None:
             if maxconn is None:
-                maxconn = int(os.environ.get('DOCKD_DB_POOL_MAX', '5'))
+                maxconn = _DEFAULT_POOL_MAX
             _pool = ThreadedConnectionPool(
                 minconn, maxconn, dsn=_database_url(),
                 cursor_factory=RealDictCursor,
+                **_KEEPALIVE_KWARGS,
             )
             logger.info(
                 "Postgres pool initialized (min=%d max=%d)", minconn, maxconn,
@@ -81,9 +110,32 @@ def _get_pool():
     return _pool
 
 
+def _is_live(conn) -> bool:
+    """True if the connection answers a trivial round-trip.
+
+    A connection the server dropped while idle looks fine until the first
+    query, which then fails. Probing on checkout lets get_db() discard the
+    dead one and hand back a working connection, so the caller's real work
+    (e.g. the post-label ship_history / override_log INSERT, whose failure
+    is swallowed by its caller) never lands on a corpse socket.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        # No rollback here: the caller's work joins this transaction and
+        # commits/rolls back as its own unit (the same way read-only callers
+        # already leave their SELECT's transaction to the caller). Rolling
+        # back on checkout would also clobber the shared-transaction test
+        # harness.
+        return True
+    except Exception:
+        return False
+
+
 @contextmanager
 def get_db():
-    """Yield a pooled connection for one unit of work.
+    """Yield a live pooled connection for one unit of work.
 
     Usage mirrors the old ``get_ship_db()`` handles but as a context
     manager, so callers never leak a connection back to the pool in a
@@ -94,20 +146,44 @@ def get_db():
                 cur.execute("INSERT ... VALUES (%s)", (x,))
             conn.commit()
 
-    On any exception the transaction is rolled back before the connection
-    returns to the pool -- critical after a ``UniqueViolation`` (which
+    The yielded connection is probed live on checkout (see ``_is_live``);
+    any the server dropped while idle are closed and skipped. On any
+    exception the transaction is rolled back before the connection returns
+    to the pool -- critical after a ``UniqueViolation`` (which
     ``ship_attempts.insert_pending`` relies on raising), because an aborted
     transaction must be cleared before the connection is reused.
     """
     pool = _get_pool()
-    conn = pool.getconn()
+    conn = None
+    for _ in range(_MAX_CHECKOUT_TRIES):
+        candidate = pool.getconn()
+        if _is_live(candidate):
+            conn = candidate
+            break
+        # Dead socket: drop it from the pool entirely (close=True) so it is
+        # never handed out again, then try for another / a fresh one.
+        pool.putconn(candidate, close=True)
+    if conn is None:
+        raise psycopg2.OperationalError(
+            f"no live Postgres connection after {_MAX_CHECKOUT_TRIES} attempts"
+        )
+
+    broken = False
     try:
         yield conn
     except Exception:
-        conn.rollback()
+        # Clear the aborted transaction before reuse. Guard it: if the
+        # connection itself died mid-operation, rollback() raises, and an
+        # unguarded rollback here would REPLACE the caller's real exception
+        # with a useless InterfaceError -- masking the actual failure. Swallow
+        # the rollback error and mark the connection broken so it is discarded.
+        try:
+            conn.rollback()
+        except Exception:
+            broken = True
         raise
     finally:
-        pool.putconn(conn)
+        pool.putconn(conn, close=bool(broken or conn.closed))
 
 
 # Backward-compatible names. All three SQLite files collapsed into one
