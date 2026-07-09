@@ -53,12 +53,12 @@ def new_idempotency_key() -> str:
 
 
 class ShipAttemptsStore:
-    """Thin SQLite-backed wrapper around the `ship_attempts` table.
+    """Thin Postgres-backed wrapper around the `ship_attempts` table.
 
-    Single connection per operation; lock guards the rare
-    write-after-read pattern (mark_*). The table itself sits in
-    `shipping_history.db` alongside `ship_history` so a backup of
-    one file captures everything.
+    Connection per operation from the shared pool; lock guards the rare
+    write-after-read pattern (mark_*). The table lives in the same
+    Postgres database as `ship_history`, so a backup of that database
+    captures everything.
     """
 
     def __init__(self):
@@ -78,25 +78,25 @@ class ShipAttemptsStore:
 
         UNIQUE on `idempotency_key` is the safety belt: a programmer
         bug that reuses a key under the same store raises
-        sqlite3.IntegrityError, which `mark_*` callers do not catch.
+        psycopg2 UniqueViolation (a subclass of IntegrityError), which
+        `mark_*` callers do not catch -- the "let it raise" contract that
+        keeps a reused key from silently overwriting a live attempt.
         """
         if operation not in _VALID_OPERATIONS:
             raise ValueError(f"operation must be one of {_VALID_OPERATIONS}")
         body_text = _canonical_body(request_body)
         body_hash = _body_sha256(request_body)
         with self._lock:
-            conn = get_ship_db()
-            try:
-                conn.execute(
-                    """INSERT INTO ship_attempts
-                       (idempotency_key, operation, so_number,
-                        request_body, request_body_sha256, status)
-                       VALUES (?, ?, ?, ?, ?, 'pending')""",
-                    (idempotency_key, operation, so_number, body_text, body_hash),
-                )
+            with get_ship_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO ship_attempts
+                           (idempotency_key, operation, so_number,
+                            request_body, request_body_sha256, status)
+                           VALUES (%s, %s, %s, %s, %s, 'pending')""",
+                        (idempotency_key, operation, so_number, body_text, body_hash),
+                    )
                 conn.commit()
-            finally:
-                conn.close()
 
     def mark_success(
         self,
@@ -161,34 +161,31 @@ class ShipAttemptsStore:
             raise ValueError(f"status must be one of {_VALID_STATUSES}")
         body_text = json.dumps(response_body) if response_body is not None else None
         with self._lock:
-            conn = get_ship_db()
-            try:
-                conn.execute(
-                    """UPDATE ship_attempts
-                          SET status = ?,
-                              response_body = ?,
-                              response_status = ?,
-                              error_kind = ?,
-                              attempt_count = attempt_count + 1,
-                              last_attempt_at = datetime('now', 'localtime')
-                        WHERE idempotency_key = ?""",
-                    (status, body_text, response_status, error_kind, idempotency_key),
-                )
+            with get_ship_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """UPDATE ship_attempts
+                              SET status = %s,
+                                  response_body = %s,
+                                  response_status = %s,
+                                  error_kind = %s,
+                                  attempt_count = attempt_count + 1,
+                                  last_attempt_at = NOW()
+                            WHERE idempotency_key = %s""",
+                        (status, body_text, response_status, error_kind, idempotency_key),
+                    )
                 conn.commit()
-            finally:
-                conn.close()
 
     # ---- read path -----------------------------------------------------
 
     def get(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
-        conn = get_ship_db()
-        try:
-            row = conn.execute(
-                "SELECT * FROM ship_attempts WHERE idempotency_key = ?",
-                (idempotency_key,),
-            ).fetchone()
-        finally:
-            conn.close()
+        with get_ship_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM ship_attempts WHERE idempotency_key = %s",
+                    (idempotency_key,),
+                )
+                row = cur.fetchone()
         return dict(row) if row else None
 
     def find_recoverable(self, *, limit: int = 50) -> List[Dict[str, Any]]:
@@ -199,31 +196,29 @@ class ShipAttemptsStore:
         caps how many we drain in one boot so a bad batch cannot
         delay startup forever.
         """
-        conn = get_ship_db()
-        try:
-            rows = conn.execute(
-                """SELECT * FROM ship_attempts
-                    WHERE status IN ('pending', 'unknown')
-                    ORDER BY created_at ASC
-                    LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        finally:
-            conn.close()
+        with get_ship_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT * FROM ship_attempts
+                        WHERE status IN ('pending', 'unknown')
+                        ORDER BY created_at ASC
+                        LIMIT %s""",
+                    (limit,),
+                )
+                rows = cur.fetchall()
         return [dict(r) for r in rows]
 
     def list_recent(self, *, limit: int = 100) -> List[Dict[str, Any]]:
         """Recent attempts for admin observability (newest first)."""
-        conn = get_ship_db()
-        try:
-            rows = conn.execute(
-                """SELECT * FROM ship_attempts
-                    ORDER BY created_at DESC
-                    LIMIT ?""",
-                (limit,),
-            ).fetchall()
-        finally:
-            conn.close()
+        with get_ship_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT * FROM ship_attempts
+                        ORDER BY created_at DESC
+                        LIMIT %s""",
+                    (limit,),
+                )
+                rows = cur.fetchall()
         return [dict(r) for r in rows]
 
     # ---- maintenance ---------------------------------------------------
@@ -238,19 +233,18 @@ class ShipAttemptsStore:
         Safe to call from a cron / scheduled task; not invoked
         automatically by dockd today.
         """
-        cutoff_sql = f"datetime('now', 'localtime', '-{int(older_than_days)} days')"
         with self._lock:
-            conn = get_ship_db()
-            try:
-                cur = conn.execute(
-                    f"""DELETE FROM ship_attempts
-                         WHERE status IN ('success', 'rejected')
-                           AND created_at < {cutoff_sql}"""
-                )
+            with get_ship_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """DELETE FROM ship_attempts
+                            WHERE status IN ('success', 'rejected')
+                              AND created_at < NOW() - make_interval(days => %s)""",
+                        (int(older_than_days),),
+                    )
+                    deleted = cur.rowcount
                 conn.commit()
-                return cur.rowcount
-            finally:
-                conn.close()
+                return deleted
 
 
 __all__ = [

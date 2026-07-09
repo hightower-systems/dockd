@@ -1,9 +1,10 @@
 """Default operational settings (open-source distribution).
 
-On first boot the SettingsStore writes this dict to `settings.json`
-and the UsersStore writes `users.json`. Both are then editable
-through the admin settings UI; this module is consulted only when no
-file exists yet.
+On first boot the SettingsStore seeds this dict into the Postgres
+`dockd_settings` table (missing keys only) and it is editable through the
+admin settings UI; this module is the fallback for any key without a
+stored row. (Settings moved to Postgres in Phase 2c; user identity is
+Sentry's, so Dockd has no user store.)
 
 Defaults are deliberately blank / neutral so the repo can ship as
 open source without leaking any one deployment's data. Operators add
@@ -129,22 +130,4 @@ DEFAULT_SETTINGS = {
 }
 
 
-# Bootstrap user spec. UsersStore hashes the plain password on first
-# boot and writes the result to users.json. The
-# `must_change_password` flag forces the operator to set a new
-# password before any other endpoint will respond.
-DEFAULT_USERS_BOOTSTRAP = {
-    "schema_version": SETTINGS_SCHEMA_VERSION,
-    "users": [
-        {
-            "username": "admin",
-            "role": "admin",
-            "password": "admin",
-            "must_change_password": True,
-        },
-    ],
-}
-
-
-VALID_ROLES = ("admin", "user")
 VALID_BOX_PREFERENCES = ("USPS", "UPS", "WEIGHT_THRESHOLD")

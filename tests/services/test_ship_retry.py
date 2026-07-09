@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.models.database import get_ship_db
 from app.services.backend import (
     AlreadyShippedError,
     NetworkError,
@@ -18,19 +17,9 @@ from app.services.backend import (
 )
 from app.services.ship_attempts import new_idempotency_key
 
-
-@pytest.fixture(autouse=True)
-def _clear_ship_attempts():
-    """The app fixture is session-scoped so the ship_attempts table
-    persists across tests in this file. Each retry test wants a clean
-    slate so find_recoverable() returns only its own row."""
-    conn = get_ship_db()
-    try:
-        conn.execute("DELETE FROM ship_attempts")
-        conn.commit()
-    finally:
-        conn.close()
-    yield
+# No table-clearing fixture is needed: conftest rolls back each test's
+# transaction, so ship_attempts starts empty for every test and
+# find_recoverable() returns only the rows a test inserts itself.
 
 
 class TestRetryRecoverable:

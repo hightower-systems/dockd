@@ -34,7 +34,6 @@ from app.services.backend import (
 )
 from app.services.default_settings import DEFAULT_SETTINGS
 from app.services.label_cache import LabelCache
-from app.services.settings import SettingsStore
 from app.services.shipping import (
     _build_customs_items,
     _build_shiprush_payload,
@@ -498,35 +497,33 @@ class TestIntlTrackingPrefixes:
 # ---------------------------------------------------------------------------
 
 
-def _fresh_store(tmp_path):
-    return SettingsStore(str(tmp_path / 'settings.json'))
+@pytest.fixture
+def store(app):
+    """The app's Postgres-backed settings_store; conftest seeds
+    DEFAULT_SETTINGS per test and rolls each test's writes back."""
+    return app.settings_store
 
 
 class TestBannedCountryGate:
 
-    def test_default_banned_list_seeded(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_default_banned_list_seeded(self, store):
         intl = store.get('international') or {}
         assert set(intl.get('banned_countries', [])) >= {'CU', 'IR', 'KP', 'SY'}
 
-    def test_banned_country_returns_true(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_banned_country_returns_true(self, store):
         assert store.is_country_banned('KP') is True
         assert store.is_country_banned('kp') is True  # case-insensitive
         assert store.is_country_banned(' kp ') is True  # whitespace-tolerant
 
-    def test_allowed_country_returns_false(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_allowed_country_returns_false(self, store):
         assert store.is_country_banned('CA') is False
         assert store.is_country_banned('US') is False
 
-    def test_blank_country_returns_false(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_blank_country_returns_false(self, store):
         assert store.is_country_banned(None) is False
         assert store.is_country_banned('') is False
 
-    def test_runtime_update_takes_effect(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_runtime_update_takes_effect(self, store):
         assert store.is_country_banned('XX') is False
         store.patch({'international': {
             **DEFAULT_SETTINGS['international'],
@@ -537,8 +534,7 @@ class TestBannedCountryGate:
 
 class TestPublicSubsetSecrecy:
 
-    def test_public_subset_does_not_leak_tax_ids(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_public_subset_does_not_leak_tax_ids(self, store):
         store.patch({'international': {
             **DEFAULT_SETTINGS['international'],
             'shipper_tax_ids': {
@@ -559,7 +555,6 @@ class TestPublicSubsetSecrecy:
         # can render without admin scope.
         assert 'international_enabled' in subset
 
-    def test_public_subset_does_not_leak_banned_list(self, tmp_path):
-        store = _fresh_store(tmp_path)
+    def test_public_subset_does_not_leak_banned_list(self, store):
         subset = store.public_subset()
         assert 'banned_countries' not in repr(subset)

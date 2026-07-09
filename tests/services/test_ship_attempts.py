@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from app.models.database import init_all_dbs
 from app.services.ship_attempts import (
     ShipAttemptsStore,
     _body_sha256,
@@ -15,9 +14,9 @@ from app.services.ship_attempts import (
 
 @pytest.fixture
 def store(app):
-    """Ship attempts share the same SQLite file as ship_history;
-    the session-scoped `app` fixture redirects both to a temp dir."""
-    init_all_dbs()
+    """Ship attempts share the same Postgres database as ship_history;
+    the session-scoped `app` fixture wires the pool to the test DB and
+    each test's writes are rolled back after it runs."""
     return ShipAttemptsStore()
 
 
@@ -100,13 +99,13 @@ class TestStoreLifecycle:
             )
 
     def test_duplicate_key_raises(self, store):
-        import sqlite3
+        from psycopg2 import errors
         key = new_idempotency_key()
         store.insert_pending(
             idempotency_key=key, operation='ship', so_number='SO-4',
             request_body={},
         )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(errors.UniqueViolation):
             store.insert_pending(
                 idempotency_key=key, operation='ship', so_number='SO-4',
                 request_body={},

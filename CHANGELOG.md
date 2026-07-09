@@ -2,6 +2,83 @@
 
 All notable changes to Dockd will be documented in this file.
 
+## [v1.1.0] - 2026-07-06
+
+Durability release. Dockd's operational state moves off the ephemeral,
+SMB-backed SQLite files that corrupted four times in six weeks (a
+Container Apps revision swap briefly runs two unlocked writers over Azure
+Files) and onto the Postgres instance Sentry-WMS already runs on.
+Settings move with it, out of the JSON file. And with Postgres in place,
+Dockd stops keeping its own user table entirely: Sentry becomes the single
+sign-on for all logins, so the pack station shares one credential set with
+the rest of the platform.
+
+### Added -- Postgres data layer
+
+- **Alembic migrations** (`alembic/`, `alembic.ini`). `alembic upgrade
+  head` runs at container boot before the app starts, so the schema is
+  versioned instead of created ad hoc. A `postgres:16` service in
+  `docker-compose.yml` matches prod for local dev.
+- **`0001_baseline`** creates `ship_history`, `ship_attempts`, and
+  `override_log` in Postgres (BIGSERIAL keys, TIMESTAMPTZ timestamps, the
+  ship_attempts CHECK + UNIQUE constraints preserved).
+  **`0003_dockd_settings`** adds a `dockd_settings` key/JSONB table.
+- **`DATABASE_URL`** (a libpq DSN) is now required at runtime; the pool
+  and the boot migration both fail loud if it is unset.
+
+### Changed -- storage
+
+- **`ship_history` / `ship_attempts` / `override_log`** are psycopg2 over a
+  shared `ThreadedConnectionPool`. The crash-recovery idempotency contract
+  is intact: a duplicate idempotency key still raises (now psycopg2
+  `UniqueViolation`, a subclass of the old `IntegrityError`).
+- **Pool hardening.** Connections carry TCP keepalives + a connect timeout,
+  and every checkout is probed live -- a connection the server dropped while
+  idle is discarded and a working one handed back, so a post-label
+  `ship_history` / `override_log` write (whose failure is swallowed) never
+  lands on a dead socket. The rollback on the error path is guarded so a
+  dead-connection rollback cannot mask the caller's real exception.
+- **Operational settings** live in `dockd_settings` -- one JSONB row per
+  top-level key, merged over the defaults, read fresh per request. The
+  `SettingsStore` interface is unchanged, so every service that reads
+  settings is untouched. Secrets that were inline in the JSON stay inline
+  in the table, still hidden from non-admin callers by `public_subset`. The
+  ~14 settings reads a single ship makes now share one query per request
+  (cached on `flask.g`), keeping the read-fresh contract at a fraction of the
+  cost.
+
+### Changed -- authentication (Sentry SSO)
+
+- **Login verifies against Sentry.** `POST /login` proxies credentials to
+  Sentry's `/api/auth/login`, maps the role (Sentry `ADMIN`/`USER` to
+  dockd `admin`/`user`), and stores only `{name, role}` in the session.
+  Sentry owns the password, the (IP, username) lockout (Dockd forwards the
+  operator's real IP), and forced-password-change (Dockd blocks login with
+  a "change it in Sentry" message instead of carrying its own rotation).
+  Ship / void backend calls are unchanged -- they keep using the service
+  `X-WMS-Token`.
+- **Ship authorization.** A non-ADMIN Sentry account must hold the `ship`
+  function (from the login response's `allowed_functions`) to use the pack
+  station; ADMIN is exempt. Restores the explicitly-granted model the JSON
+  user store had.
+- **Session lifetime.** The login session is now a hard-capped 8h cookie
+  (permanent, not refreshed per request), matching the Sentry JWT that
+  authorized it, so a deactivation in Sentry takes effect within a shift on a
+  kiosk browser that never closes.
+- **Operator IP behind the proxy.** With `TRUST_PROXY=true` set on the ACA
+  deploy, `X-Forwarded-For` is honored so the real operator IP -- not the
+  shared ingress address -- keys Sentry's lockout and the `/login` rate
+  limiter. Off by default to avoid trusting spoofable headers off-proxy.
+
+### Removed
+
+- **Dockd's local user store.** No more `users` table, bcrypt hashes,
+  password policy, login-attempt lockout, `/api/users` admin CRUD, the
+  settings-page user management, or the forced-password-change overlay --
+  identity is Sentry's now.
+- The SMB SQLite workarounds (`SQLITE_NOLOCK`, `SQLITE_JOURNAL_MODE`) and
+  the JSON settings/users files, along with their chmod-600 handling.
+
 ## [v0.7.0] - 2026-05-14
 
 "International shipping, dockd side" release. Dockd v0.6.x assumed

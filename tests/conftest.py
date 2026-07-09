@@ -1,9 +1,38 @@
-"""Shared test fixtures for Dockd."""
+"""Shared test fixtures for Dockd.
+
+Dockd's operational tables live in Postgres. The suite runs against a real
+``postgres:16`` (default: the local docker on port 5434; override with
+``DOCKD_TEST_DATABASE_URL``) so tests exercise real constraint/FK
+enforcement, not a SQLite shim.
+
+Isolation model -- rollback-per-test:
+- The schema is created once per session via ``alembic upgrade head``.
+- One shared connection is opened for the session. Every ``get_db()`` the
+  app makes is routed to that single connection through a fake pool, and the
+  app's ``commit()`` is neutered to a no-op, so all of a test's writes stay
+  inside one open transaction.
+- After each test the shared connection is rolled back, wiping the test's
+  data while leaving the schema intact. No cross-test bleed.
+"""
 
 import os
 import sys
 import tempfile
+
 import pytest
+
+# ---------------------------------------------------------------------------
+# Point the app at the test Postgres BEFORE any app import. python-dotenv's
+# load_dotenv() (called in app.config) only sets unset vars, so seeding
+# DATABASE_URL here wins over any developer .env.
+# ---------------------------------------------------------------------------
+TEST_DATABASE_URL = os.environ.get(
+    'DOCKD_TEST_DATABASE_URL',
+    'postgresql://dockd:dockd@localhost:5434/dockd_test',
+)
+os.environ['DATABASE_URL'] = TEST_DATABASE_URL
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Stub hardware modules before any app imports
 fake_hid = type(sys)('hid')
@@ -38,29 +67,114 @@ for _env_key in ('BACKEND', 'SENTRY_BASE_URL', 'DOCKD_SENTRY_TOKEN',
     os.environ[_env_key] = ''
 
 
+# ---------------------------------------------------------------------------
+# Postgres test substrate
+# ---------------------------------------------------------------------------
+
+
+class _ProxyConn:
+    """Wraps the one shared test connection.
+
+    App code calls ``conn.commit()`` after every write; here that is a
+    no-op so the writes stay inside the session-wide transaction that the
+    per-test fixture rolls back. ``cursor()`` and ``rollback()`` pass
+    through -- the latter matters for the ``get_db()`` except-path that
+    clears an aborted transaction after a UniqueViolation.
+    """
+
+    def __init__(self, real):
+        self._real = real
+
+    def cursor(self, *args, **kwargs):
+        return self._real.cursor(*args, **kwargs)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        self._real.rollback()
+
+    @property
+    def closed(self):
+        # get_db() checks this before returning a connection to the pool;
+        # mirror the real connection so the double is faithful.
+        return self._real.closed
+
+
+class _FakePool:
+    """Minimal ThreadedConnectionPool stand-in that always hands back the
+    one shared (proxied) test connection and never really closes it."""
+
+    def __init__(self, proxy):
+        self._proxy = proxy
+
+    def getconn(self, *args, **kwargs):
+        return self._proxy
+
+    def putconn(self, conn, *args, **kwargs):
+        pass
+
+    def closeall(self):
+        pass
+
+
+@pytest.fixture(scope='session', autouse=True)
+def _pg_schema():
+    """Create the schema once per session via the real migration chain."""
+    import psycopg2
+    from alembic import command
+    from alembic.config import Config as AlembicConfig
+
+    # Clean slate so `alembic upgrade head` is idempotent across re-runs.
+    admin = psycopg2.connect(TEST_DATABASE_URL)
+    admin.autocommit = True
+    with admin.cursor() as cur:
+        cur.execute("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;")
+    admin.close()
+
+    cfg = AlembicConfig(os.path.join(PROJECT_ROOT, 'alembic.ini'))
+    cfg.set_main_option('script_location', os.path.join(PROJECT_ROOT, 'alembic'))
+    command.upgrade(cfg, 'head')
+    yield
+
+
 @pytest.fixture(scope='session')
-def app():
-    """Create the Dockd app with test config and isolated temp paths."""
-    tmp = tempfile.mkdtemp(prefix='dockd_test_')
+def _shared_conn(_pg_schema):
+    """The single connection every app query is routed to for the session."""
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
 
-    # Redirect DB and store paths to temp dir before app creation.
+    conn = psycopg2.connect(TEST_DATABASE_URL, cursor_factory=RealDictCursor)
+    conn.autocommit = False
+    yield conn
+    conn.rollback()
+    conn.close()
+
+
+@pytest.fixture(scope='session')
+def app(_shared_conn):
+    """Create the Dockd app with the test DB pool wired in."""
     from app.models import database
-    database.SHIP_DB_PATH = os.path.join(tmp, 'shipping_history.db')
-    database.OVERRIDE_DB_PATH = os.path.join(tmp, 'override.db')
 
-    os.environ['SETTINGS_PATH'] = os.path.join(tmp, 'settings.json')
-    os.environ['USERS_PATH'] = os.path.join(tmp, 'users.json')
+    # Route every get_db() through the shared connection.
+    database._pool = _FakePool(_ProxyConn(_shared_conn))
 
     from app import create_app
     from app.config import Config
 
-    test_app = create_app(config_class=Config)
+    test_app = create_app(config_class=Config)  # init_pool() is a no-op: pool set
     test_app.config['TESTING'] = True
 
-    # Re-init databases at temp paths
-    database.init_all_dbs()
-
     yield test_app
+
+    database.close_pool()
+
+
+@pytest.fixture(autouse=True)
+def _rollback_after_test(_shared_conn):
+    """Wipe each test's writes by rolling back the shared transaction."""
+    yield
+    _shared_conn.rollback()
 
 
 @pytest.fixture
@@ -88,19 +202,32 @@ def admin_client(app):
 
 
 @pytest.fixture(autouse=True)
-def inject_test_user(app):
-    """Ensure a TestUser exists in the UsersStore for every test, with
-    must_change_password cleared so blueprint tests can hit gated
-    endpoints without rotating the password first."""
-    store = app.users_store
-    if not store.get_user('TestUser'):
-        store.add_user('TestUser', 'testpass123', 'user', must_change_password=False)
+def _seed_settings(app):
+    """Seed DEFAULT_SETTINGS INSIDE each test's transaction.
+
+    Settings live in Postgres and every test is rolled back, so
+    session-scoped seeding would vanish after the first test. Re-seeding
+    per test keeps DEFAULT_SETTINGS populated for every test (carrier /
+    shipping / printer read settings via the store). Users are Sentry's
+    now, so there is nothing user-related to seed.
+    """
+    app.settings_store.ensure_seeded()
     yield
-    if store.get_user('TestUser'):
-        try:
-            store.remove_user('TestUser')
-        except Exception:
-            pass
+
+
+@pytest.fixture
+def mock_sentry_auth(app):
+    """Replace the Sentry identity provider with a mock for login tests.
+
+    Dockd's /login calls app.sentry_auth.login(); tests set the mock's
+    return_value or side_effect to drive success / typed failures.
+    """
+    from unittest.mock import MagicMock
+    original = app.sentry_auth
+    mock = MagicMock()
+    app.sentry_auth = mock
+    yield mock
+    app.sentry_auth = original
 
 
 @pytest.fixture(autouse=True)

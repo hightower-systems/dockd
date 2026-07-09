@@ -8,17 +8,17 @@ Categories:
   1. Bearer tokens never appear in log output (RedactionFilter +
      log-statement hygiene).
   2. TLS validation cannot be turned off through configuration.
-  3. Sensitive fields never appear in API responses (e.g. /api/users
-     returns role + username but never the password hash).
-  4. settings.json + users.json have chmod 600 perms after every
-     write, including patches and password updates.
+  3. Sensitive values never appear in API responses (e.g. the secrets
+     presence endpoint returns booleans, never the values).
+
+  (The former chmod-600 file-permission guards retired in Phase 2c:
+  users and settings both moved to Postgres, so there is no users.json
+  or settings.json left on disk to protect.)
 """
 
 import inspect
 import logging
-import os
 import re
-import stat
 
 import httpx
 
@@ -95,24 +95,14 @@ class TestTLSEnforced:
 
 
 # ----------------------------------------------------------------------
-# 3. API responses must not expose hashes
+# 3. API responses must not expose secret values
 # ----------------------------------------------------------------------
 
 
 class TestNoHashInResponses:
 
-    def test_list_users_omits_password_hash(self, admin_client):
-        resp = admin_client.get('/api/users')
-        assert resp.status_code == 200
-        body = resp.get_json()
-        for user in body:
-            # The store records `password_hash`; the API must not
-            # echo it.
-            assert 'password_hash' not in user
-            for k, v in user.items():
-                if isinstance(v, str):
-                    assert not v.startswith('scrypt:'), \
-                        f"Field {k} appears to be a scrypt hash"
+    # (The former /api/users hash-leak guard retired with the users table:
+    # Dockd no longer stores users -- Sentry is the identity provider.)
 
     def test_settings_secrets_presence_never_returns_values(self, admin_client):
         resp = admin_client.get('/api/settings/secrets/presence')
@@ -124,34 +114,7 @@ class TestNoHashInResponses:
 
 
 # ----------------------------------------------------------------------
-# 4. File-perm guards (chmod 600 on every write)
-# ----------------------------------------------------------------------
-
-
-class TestFilePermissions:
-
-    def test_settings_json_is_600_after_patch(self, admin_client, app):
-        path = app.settings_store.path
-        admin_client.patch('/api/settings', json={'high_value_threshold': 250})
-        mode = stat.S_IMODE(os.stat(path).st_mode)
-        assert mode == 0o600
-
-    def test_users_json_is_600_after_password_set(self, admin_client, app):
-        path = app.users_store.path
-        app.users_store.add_user('regression_user', 'pw1234', 'user')
-        try:
-            admin_client.put(
-                '/api/users/regression_user/password',
-                json={'password': 'newpw5678'},
-            )
-            mode = stat.S_IMODE(os.stat(path).st_mode)
-            assert mode == 0o600
-        finally:
-            app.users_store.remove_user('regression_user')
-
-
-# ----------------------------------------------------------------------
-# 5. Backend timeouts are bounded
+# 4. Backend timeouts are bounded
 # ----------------------------------------------------------------------
 
 
