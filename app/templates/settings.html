@@ -4,112 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dockd Settings</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --brand-red: #8e2716;
-            --cream: #fdf4e3;
-            --card-tan: #f7f3ec;
-            --card-border: #e0d9cc;
-            --text: #1a1a1a;
-            --text-muted: #999080;
-            --success: #16a34a;
-            --error: #dc2626;
-            --border: rgba(142, 39, 22, 0.18);
-            --radius: 6px;
-        }
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'DM Sans', sans-serif;
-            background: var(--cream);
-            color: var(--text);
-            margin: 0;
-            min-height: 100vh;
-            -webkit-font-smoothing: antialiased;
-        }
-        header {
-            background: var(--brand-red);
-            color: white;
-            padding: 14px 24px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        header h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 2px; }
-        header .right { display: flex; gap: 12px; align-items: center; }
-        header .who { opacity: 0.85; font-size: 14px; }
-        header a.back-btn {
-            background: rgba(255,255,255,0.18); color: white; padding: 8px 14px;
-            border-radius: var(--radius); text-decoration: none; font-weight: 600; font-size: 14px;
-        }
-        header a.back-btn:hover { background: rgba(255,255,255,0.28); }
-        nav.tabs {
-            display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap;
-            background: var(--cream); border-bottom: 1px solid var(--card-border);
-        }
-        nav.tabs button {
-            background: transparent; border: 1px solid transparent; padding: 8px 14px;
-            font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
-            border-radius: var(--radius) var(--radius) 0 0; color: var(--text-muted);
-        }
-        nav.tabs button.active {
-            background: var(--card-tan); color: var(--brand-red);
-            border: 1px solid var(--card-border); border-bottom-color: var(--card-tan);
-            margin-bottom: -1px;
-        }
-        main { padding: 24px; max-width: 1200px; margin: 0 auto; }
-        .tab-pane { display: none; }
-        .tab-pane.active { display: block; }
-        .card {
-            background: var(--card-tan); border: 1px solid var(--card-border);
-            border-radius: var(--radius); padding: 18px 22px; margin-bottom: 20px;
-        }
-        .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--brand-red); letter-spacing: 1px; text-transform: uppercase; }
-        .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
-        .field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
-        .field label { font-size: 12px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
-        .field input, .field select {
-            font-family: inherit; font-size: 14px; padding: 8px 10px;
-            border: 1px solid var(--card-border); border-radius: var(--radius); background: white;
-        }
-        .field input:focus, .field select:focus { outline: 2px solid var(--brand-red); outline-offset: -1px; }
-        button.primary {
-            background: var(--brand-red); color: white; border: none; padding: 10px 18px;
-            border-radius: var(--radius); font-weight: 700; font-size: 14px; cursor: pointer;
-        }
-        button.primary:hover { background: #a83020; }
-        button.secondary {
-            background: white; border: 1px solid var(--card-border); padding: 8px 12px;
-            border-radius: var(--radius); font-weight: 600; font-size: 13px; cursor: pointer;
-        }
-        button.danger { background: var(--error); color: white; border: none; padding: 6px 10px; border-radius: var(--radius); font-size: 12px; cursor: pointer; }
-        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--card-border); font-size: 13px; }
-        th { background: rgba(0,0,0,0.04); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
-        td input, td select { width: 100%; padding: 5px 6px; font-size: 13px; border: 1px solid var(--card-border); border-radius: 4px; background: white; }
-        .status-bar {
-            position: fixed; bottom: 20px; right: 20px; padding: 12px 18px;
-            background: var(--success); color: white; border-radius: var(--radius);
-            font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.18);
-            opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
-        }
-        .status-bar.show { opacity: 1; }
-        .status-bar.error { background: var(--error); }
-        .pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
-        .pill.admin { background: var(--brand-red); color: white; }
-        .pill.user { background: var(--text-muted); color: white; }
-        textarea {
-            font-family: inherit; font-size: 13px; padding: 8px; min-height: 60px;
-            border: 1px solid var(--card-border); border-radius: var(--radius); background: white; width: 100%;
-        }
-        .help { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-        .secret-row input { font-family: monospace; }
-        .secret-status { font-size: 12px; padding: 2px 8px; border-radius: 12px; }
-        .secret-status.set { background: var(--success); color: white; }
-        .secret-status.unset { background: var(--text-muted); color: white; }
-    </style>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAACNklEQVR4nGP8+OYxAy0BE01NZxi1gAgwGgcEwWgQUSeI/v////ffPwYGhq8/f3RsWi2THWdeU/Ds/VsGBgaIOB7ASLAs+vvvHzMTyB3bzp+uX7Pk9otnimLiv/78+fn7966qViUxCbgCciz48+8vCxPzh29fa1YuWnJkHwMDQ2t4fIaL18dvX6tXLtpy/uT+2k4VcUk8duCzAGL66Xu3cuZNu/n8qbaM/NKc0n///x+6fiXC0o6DjW3Gnm1Td23ZVt4oKyz67/9/JkZGEiyAOGrx4X1Fi2f9/vs3zs65IyKxf9v6x+/etITF7bx4VlJQyElbf/3pYyuOHZycmCXKywcyDsMOdH/9////z7+/f/79ZWZi6tq8JnfBdGZm5glx6c2hsaET295++Tw5IbN785p///+bKastOrQ30NSqNSJh16Wzv//+/fPv3////3H6AM2PjWuX9m/bwMDAoCgmHmBiOWvvjq8/fzhq6V1+/ODN509R1g4nbt9w1jHwMTLTlpEXATsfDpCNQg+iG8+eHL99ffuFM7sunWNhYmZnZWVnZf3154+kgCAPB+fvv385WFn//P378tMHBgaGLz++f/3xg52VTU5YRFdO0UZd20JVQ0NKBrsP9l29ePru7QevX7KxsCiIiuvIyovy8Qtx8/JxcfFycGImkt9//37/9fPT92+vPn54+ObVg9evHr159fPPb3kRcQtVdXtNXQKRTC3ARFPTGUYtIAKMxgFBMBpEBAHNgwgAZHAR/7rKStcAAAAASUVORK5CYII=">
+    <link rel="icon" href="/favicon.ico?v=3" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32.png') }}?v=3">
+    <link rel="icon" type="image/png" sizes="180x180" href="{{ url_for('static', filename='favicon.png') }}?v=3">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.png') }}?v=3">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dockd.css') }}">
 </head>
-<body>
+<body class="settings-page">
     <header>
         <h1>DOCKD :: SETTINGS</h1>
         <div class="right">

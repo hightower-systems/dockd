@@ -1,7 +1,7 @@
 """Shipping blueprint - thin controllers that delegate to ShippingService."""
 
 import logging
-from flask import Blueprint, request, jsonify, session, render_template, current_app, g
+from flask import Blueprint, current_app, g, jsonify, render_template, request, send_from_directory, session
 from app.blueprints.auth import login_required, override_exception_skus
 from app.config import Config
 
@@ -22,6 +22,20 @@ def _capture_sentry_token():
     DOCKD_SENTRY_TOKEN env var when the header is absent.
     """
     g.sentry_token = request.headers.get('X-Sentry-Token', '') or ''
+
+
+@shipping_bp.route('/favicon.ico')
+def favicon():
+    """Serve the AvidMax mark at the path browsers ask for unprompted.
+
+    The <link rel="icon"> tags in the templates point at /static, but every
+    browser also requests /favicon.ico at the root on its own, and some
+    prefer that answer over the declared link. Without this the request
+    falls through to a 404 and the tab keeps its generic globe.
+    """
+    return send_from_directory(
+        current_app.static_folder, 'favicon.ico',
+        mimetype='image/vnd.microsoft.icon')
 
 
 @shipping_bp.route('/')
@@ -66,7 +80,7 @@ def ship_order():
         box_id=data.get('box_id', ''),
         weight=data.get('weight', 0),
         order_number=data.get('order_number'),
-        carrier_override=data.get('carrier_override'),
+        carrier_override=data.get('service_override') or data.get('carrier_override'),
         ca_shipping_paid=data.get('ca_shipping_paid', 0),
         ob_dims=data.get('ob_dims'),
         client_ip=request.remote_addr,

@@ -60,8 +60,14 @@ os.environ.setdefault('SHIPRUSH_ENDPOINT', 'https://fake.shiprush.test/shipment/
 # real SentryBackend into the test fixture and break tests that
 # rely on backend=None or that mock the backend in a fixture. Strip
 # those values out for the duration of the test run.
+# DOCKD_DRY_RUN_LABELS belongs here for the same reason: a developer or
+# test-rig .env that sets it would short-circuit generate_label() before it
+# builds any XML, silently passing the label tests while asserting nothing.
+# Found exactly that way -- the suite went green on a laptop with no .env
+# and red on the test box where dry run was enabled.
 for _env_key in ('BACKEND', 'SENTRY_BASE_URL', 'DOCKD_SENTRY_TOKEN',
-                 'DOCKD_RETRY_PENDING_ON_BOOT', 'DOCKD_RETRY_POLL_INTERVAL'):
+                 'DOCKD_RETRY_PENDING_ON_BOOT', 'DOCKD_RETRY_POLL_INTERVAL',
+                 'DOCKD_DRY_RUN_LABELS'):
     # Set to empty (not pop) so dotenv's "only-set-if-unset" semantics
     # do not re-import the dev .env value during create_app().
     os.environ[_env_key] = ''

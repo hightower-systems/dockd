@@ -4,224 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dockd</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800&display=swap" rel="stylesheet">
-    <style>
-        .ship-count-bubble {
-            text-align: center;
-            background: #16a34a;
-            border-radius: 16px;
-            padding: 14px 12px;
-            margin: 10px 12px;
-            color: #fff;
-        }
-        .ship-count-label {
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 1.5px;
-            opacity: 0.85;
-        }
-        .ship-count-number {
-            font-size: 48px;
-            font-weight: 700;
-            line-height: 1.1;
-            margin-top: 2px;
-        }
-        :root {
-            --brand-red: #8e2716;
-            --brand-red-bright: #a83020;
-            --copper: #b87333;
-            --cream: #fdf4e3;
-            --card-tan: #f7f3ec;
-            --card-border: #e0d9cc;
-            --bg: #ffffff;
-            --text: #1a1a1a;
-            --text-muted: #999080;
-            --gray-accent: #a09b91;
-            --sidebar-dark: #2a2520;
-            --sidebar-card: #352f2a;
-            --success-green: #16a34a;
-            --error-red: #dc2626;
-            --border: rgba(142, 39, 22, 0.12);
-            --radius: 6px;
-            --radius-xl: 8px;
-            --fedex-purple: #4D148C;
-            --fedex-orange: #FF6600;
-        }
-
-        * { box-sizing: border-box; }
-
-        body {
-            font-family: 'DM Sans', sans-serif;
-            background: var(--cream);
-            color: var(--text);
-            margin: 0;
-            display: flex;
-            flex-direction: row;
-            height: 100vh;
-            overflow: hidden;
-            -webkit-font-smoothing: antialiased;
-            transition: background 0.4s ease;
-        }
-
-        /* ========== FEDEX MODE ========== */
-        body.fedex-active { background: linear-gradient(160deg, rgba(77,20,140,0.14) 0%, var(--cream) 28%, var(--cream) 72%, rgba(255,102,0,0.12) 100%); }
-        body.fedex-active .sidebar { background: linear-gradient(180deg, var(--fedex-purple) 0%, #6b21a8 30%, #1e0a33 100%); border-right-color: rgba(255,102,0,0.4); box-shadow: 4px 0 24px rgba(77,20,140,0.25); }
-        body.fedex-active .sidebar-logo { color: white; }
-        body.fedex-active .sidebar-logo span { opacity: 0.95; }
-        body.fedex-active .fedex-badge { display: flex !important; }
-        body.fedex-active .sidebar-btn { color: rgba(255,255,255,0.9); }
-        body.fedex-active .sidebar-btn:hover { background: rgba(255,102,0,0.35); color: white; }
-        body.fedex-active .sidebar-btn.exit-app-btn:hover { background: rgba(220,38,38,0.5); color: #fca5a5; }
-        body.fedex-active .user-badge { color: rgba(255,255,255,0.9); }
-        body.fedex-active #main-input { border-color: var(--fedex-orange); background: rgba(255,255,255,0.98); }
-        body.fedex-active #main-input:focus { border-color: var(--fedex-orange); box-shadow: 0 0 0 4px rgba(255,102,0,0.28); }
-        body.fedex-active .card { border-color: rgba(77,20,140,0.3); border-left-width: 6px; border-left-color: var(--fedex-orange); box-shadow: 0 4px 20px rgba(77,20,140,0.12); }
-        body.fedex-active .card h2 { color: var(--fedex-purple); }
-        body.fedex-active .order-info-box { border-color: rgba(77,20,140,0.2); background: linear-gradient(135deg, rgba(77,20,140,0.06) 0%, rgba(255,102,0,0.04) 100%); }
-        body.fedex-active #box-card.active { border-left-color: var(--fedex-orange) !important; }
-        body.fedex-active #scale-section { background: linear-gradient(135deg, var(--fedex-purple) 0%, #6b21a8 100%); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 6px 16px rgba(77,20,140,0.35); }
-        body.fedex-active .weight-captured { background: var(--fedex-orange) !important; box-shadow: 0 0 24px rgba(255,102,0,0.5); }
-        body.fedex-active .status-log { border-color: rgba(77,20,140,0.25); background: linear-gradient(180deg, rgba(77,20,140,0.08) 0%, rgba(255,102,0,0.06) 100%); color: var(--text); }
-
-        .fedex-badge { display: none; align-items: center; justify-content: center; padding: 8px 12px; margin: 0 10px 14px; background: linear-gradient(90deg, var(--fedex-purple), var(--fedex-orange)); color: white; font-size: 0.65rem; font-weight: 800; letter-spacing: 0.18em; border-radius: 999px; text-transform: uppercase; box-shadow: 0 2px 12px rgba(77,20,140,0.5); }
-
-        /* --- SIDEBAR --- */
-        .sidebar { width: 200px; min-width: 200px; background: var(--sidebar-dark); border-right: 1px solid rgba(142, 39, 22, 0.45); display: flex; flex-direction: column; flex-shrink: 0; transition: background 0.4s, border-color 0.4s, box-shadow 0.4s; }
-        .sidebar-logo { padding: 20px 16px 16px; font-size: 0.9rem; font-weight: 800; color: rgba(255,255,255,0.95); letter-spacing: 0.02em; border-bottom: 1px solid rgba(142, 39, 22, 0.4); }
-        .sidebar-logo span { font-weight: 600; opacity: 0.85; }
-        .sidebar-nav { padding: 14px 10px; display: flex; flex-direction: column; gap: 6px; }
-        .sidebar-btn { width: 100%; padding: 12px 14px; border: none; border-radius: 8px; background: transparent; color: rgba(255,255,255,0.85); font-family: inherit; font-size: 0.875rem; font-weight: 600; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s, color 0.2s; }
-        .sidebar-btn:hover { background: rgba(142, 39, 22, 0.5); color: white; }
-        .sidebar-btn.exit-app-btn:hover { background: rgba(220, 38, 38, 0.4); color: #fca5a5; }
-        .sidebar-spacer { flex: 1; min-height: 20px; }
-        .sidebar-footer { padding: 14px 10px; border-top: 1px solid rgba(142, 39, 22, 0.4); }
-        .user-badge { font-size: 0.75rem; font-weight: 600; color: rgba(255,255,255,0.65); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; padding: 0 4px; }
-        .sidebar-footer .sidebar-btn { padding: 10px 14px; font-size: 0.8125rem; }
-
-        /* --- MODULE NAV (always visible: SHIP / BIN / LABELS) --- */
-        .module-nav { padding: 10px 10px 4px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid rgba(142, 39, 22, 0.4); }
-        .module-btn { width: 100%; padding: 10px 14px; border: none; border-radius: 6px; background: transparent; color: rgba(255,255,255,0.7); font-family: inherit; font-size: 0.75rem; font-weight: 700; text-align: left; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; transition: background 0.15s, color 0.15s; }
-        .module-btn:hover { background: rgba(142, 39, 22, 0.4); color: white; }
-        .module-btn.active { background: var(--brand-red); color: white; }
-
-        /* --- SHIP ORDERS NAV (hidden until ship module active) --- */
-        #ship-nav { display: none; }
-
-        /* --- BIN / LABELS PANELS --- */
-        #bin-panel, #labels-panel { display: none; flex-direction: column; height: 100%; padding: 32px; gap: 20px; overflow-y: auto; }
-        .module-title { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--brand-red); margin: 0; }
-        .module-sub { font-size: 0.875rem; color: var(--text-muted); margin: 0 0 8px 0; }
-        .module-card { background: var(--card-tan); border: 1px solid var(--card-border); border-left: 4px solid var(--brand-red); border-radius: var(--radius-xl); padding: 24px; max-width: 720px; }
-        .scan-input { width: 100%; padding: 16px 20px; font-size: 1.125rem; font-family: inherit; border: 1px solid var(--brand-red); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); }
-        .scan-input:focus { border-color: var(--brand-red-bright); box-shadow: 0 0 0 2px rgba(142, 39, 22, 0.15); }
-        .module-result { margin-top: 18px; padding: 16px 18px; border-radius: 6px; background: var(--cream); border: 1px solid var(--card-border); font-size: 0.9375rem; min-height: 24px; }
-        .module-result.ok { border-color: rgba(22, 163, 74, 0.45); background: rgba(22, 163, 74, 0.08); }
-        .module-result.err { border-color: rgba(220, 38, 38, 0.45); background: rgba(220, 38, 38, 0.06); color: var(--error-red); }
-        .module-result p { margin: 4px 0; }
-        .module-result strong { font-weight: 700; }
-        .labels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-        .labels-grid select, .labels-grid input { width: 100%; padding: 12px 14px; font-family: inherit; font-size: 1rem; border: 1px solid var(--card-border); border-radius: 4px; background: var(--bg); color: var(--text); box-sizing: border-box; }
-        .labels-grid label { display: block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
-        .labels-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
-        .labels-tab { flex: 1; padding: 10px 14px; border: 1px solid var(--card-border); background: transparent; color: var(--text-muted); font-family: inherit; font-size: 0.8125rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 4px; cursor: pointer; }
-        .labels-tab.active { background: var(--brand-red); color: white; border-color: var(--brand-red); }
-        .print-btn { width: 100%; margin-top: 16px; padding: 14px 20px; font-size: 1rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; border: none; border-radius: 6px; background: var(--brand-red); color: white; cursor: pointer; }
-        .print-btn:hover { background: var(--brand-red-bright); }
-        .print-btn:disabled { background: var(--text-muted); cursor: not-allowed; }
-
-        /* --- MAIN CONTENT AREA --- */
-        .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-
-        /* ========== SHIP ORDERS PANEL ========== */
-        #ship-panel { display: none; flex-direction: column; height: 100%; }
-
-
-
-        .scan-container { flex-shrink: 0; padding: 24px 32px; background: linear-gradient(180deg, var(--bg) 0%, var(--cream) 100%); border-bottom: 1px solid var(--border); display: flex; justify-content: center; align-items: center; }
-        #main-input { width: 100%; max-width: 560px; padding: 14px 24px; font-size: 1rem; font-family: inherit; border: 1px solid var(--brand-red); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); text-align: center; transition: border-color 0.15s, box-shadow 0.15s; }
-        #main-input::placeholder { color: var(--text-muted); }
-        #main-input:focus { border-color: var(--brand-red-bright); box-shadow: 0 0 0 2px rgba(142, 39, 22, 0.15); }
-
-        .workspace { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; padding: 24px 32px; flex-grow: 1; overflow: hidden; height: 0; }
-
-        .card { background: var(--card-tan); border-radius: var(--radius-xl); padding: 24px; border: 1px solid var(--card-border); border-left: 4px solid var(--brand-red); box-shadow: 0 1px 4px rgba(0,0,0,0.04); display: flex; flex-direction: column; height: 100%; overflow: hidden; transition: border-color 0.3s, box-shadow 0.3s; }
-
-        h2 { color: var(--brand-red); font-size: 0.7rem; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; padding-bottom: 12px; margin: 0 0 16px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-
-        .order-info-box { background: rgba(142, 39, 22, 0.04); padding: 16px 18px; border-radius: 4px; margin-bottom: 18px; font-size: 1.125rem; line-height: 1.7; flex-shrink: 0; border: 1px solid var(--card-border); }
-        .order-info-box p { margin: 5px 0; }
-        .order-info-box strong { font-weight: 700; color: var(--text); }
-
-        .item-list { flex-grow: 1; height: 0; overflow-y: auto; border: 1px solid var(--card-border); border-radius: var(--radius); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; align-content: start; background: var(--cream); }
-        .item-row { padding: 12px 14px; border: 1px solid var(--card-border); border-radius: var(--radius); display: flex; justify-content: space-between; align-items: center; background: var(--bg); transition: border-color 0.2s, background 0.2s; }
-        .item-row.completed { background: rgba(22, 163, 74, 0.08); border-left: 3px solid var(--success-green); border-color: rgba(22, 163, 74, 0.35); }
-
-        .sku { font-weight: 700; font-size: 0.9375rem; }
-        .desc { font-size: 0.8125rem; color: var(--text-muted); }
-
-        .qty-badge { background: var(--brand-red); color: white; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 0.8125rem; margin-right: 12px; white-space: nowrap; flex-shrink: 0; }
-        .item-row.completed .qty-badge { background: var(--success-green); }
-
-        .manual-btn { background: var(--brand-red); border: none; color: white; width: 32px; height: 32px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; margin-left: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.15s; }
-        .manual-btn:hover { background: var(--brand-red-bright); }
-        .item-row.completed .manual-btn { display: none; }
-
-        #box-card { opacity: 0.5; pointer-events: none; transition: opacity 0.3s; }
-        #box-card.active { opacity: 1; pointer-events: all; border-left-color: var(--success-green) !important; }
-
-        .box-row { display: flex; gap: 14px; margin-bottom: 20px; align-items: stretch; flex-shrink: 0; }
-        .current-box { flex: 1; font-size: 1rem; font-weight: 700; color: var(--text); padding: 16px; border: 1px dashed var(--card-border); border-radius: 4px; text-align: center; background: var(--cream); display: flex; align-items: center; justify-content: center; }
-
-        .scale-section { flex: 1; background: var(--brand-red); color: white; border-radius: 4px; padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: background 0.3s, box-shadow 0.3s; }
-        .weight-display { font-size: 2rem; font-weight: 800; line-height: 1; }
-        .weight-unit { font-size: 0.7rem; opacity: 0.9; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
-        .weight-captured { animation: flashWhite 0.5s; background-color: var(--success-green) !important; }
-
-        @keyframes flashWhite { 0% { background-color: var(--brand-red); } 50% { background-color: #22c55e; } 100% { background-color: var(--brand-red); } }
-
-        .status-log { flex-grow: 1; background: var(--cream); color: var(--text-muted); padding: 14px; border-radius: 4px; font-size: 0.8125rem; font-family: ui-monospace, monospace; overflow-y: auto; height: 0; border: 1px solid var(--card-border); }
-        .log-entry { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-        .log-entry:last-child { border-bottom: none; }
-
-        /* --- LOGIN --- */
-        #login-overlay { position: fixed; inset: 0; background: linear-gradient(160deg, var(--brand-red) 0%, #4a1209 100%); z-index: 5000; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; transition: transform 0.3s ease-in-out; }
-        #login-overlay h1 { font-size: 2.5rem; font-weight: 800; margin-bottom: 0; letter-spacing: 0.04em; }
-        #login-overlay p { opacity: 0.6; margin-top: 10px; font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
-
-        .pass-box { background: var(--bg); padding: 48px 52px; border-radius: 8px; text-align: center; box-shadow: 0 16px 48px rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.1); }
-        .pass-box h2 { font-size: 1.4rem; letter-spacing: 0.04em; }
-        .pass-input { font-size: 1.2rem; padding: 15px 20px; margin-top: 16px; width: 280px; text-align: center; border: 1px solid #ccc; border-radius: 6px; outline: none; }
-        .pass-input:focus { border-color: var(--brand-red); box-shadow: 0 0 0 2px rgba(142,39,22,0.18); }
-
-        /* --- MODALS --- */
-        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); backdrop-filter: blur(8px); z-index: 2000; justify-content: center; align-items: center; }
-        .modal-content { background: var(--bg); padding: 36px 44px; text-align: center; border-radius: var(--radius-xl); width: 420px; position: relative; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.18); border: 1px solid var(--border); }
-        .link-modal-content { width: 88vw; max-width: 740px; height: 90vh; max-height: 90vh; display: flex; flex-direction: column; border: 2px solid var(--card-border); padding: 32px; text-align: left; border-radius: var(--radius-xl); }
-        #link-modal .modal-content h1 { color: var(--text) !important; }
-        #link-modal .modal-content #btn-link-submit { background: var(--brand-red) !important; border: none; border-radius: 10px; font-weight: 700; }
-        #reprint-modal .modal-content, #void-modal .modal-content { border: 2px solid var(--card-border); }
-        #reprint-modal .modal-content h1, #void-modal .modal-content h1 { color: var(--text) !important; }
-        #reprint-modal .modal-content #btn-reprint-submit, #void-modal .modal-content #btn-void-submit { background: var(--brand-red) !important; border: none; border-radius: 10px; font-weight: 700; }
-        .link-item-list { border: 2px solid var(--card-border); border-radius: 10px; padding: 12px; flex: 1; min-height: 280px; overflow-y: auto; background: var(--cream); }
-        #success-modal .modal-content { border: 2px solid var(--success-green); }
-        #error-modal .modal-content { border: 2px solid var(--error-red); }
-        #pickup-modal .modal-content { width: 540px; padding: 52px 48px; border: 3px solid #d35400; box-shadow: 0 24px 48px rgba(211,84,0,0.2); }
-        #pickup-modal .modal-content button { border-radius: 12px; font-weight: 800; }
-        .close-x { position: absolute; top: 18px; right: 22px; font-size: 1.5rem; font-weight: 400; color: var(--text-muted); cursor: pointer; line-height: 1; padding: 6px; border-radius: 4px; }
-        .close-x:hover { color: var(--text); background: var(--cream); }
-    </style>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAACNklEQVR4nGP8+OYxAy0BE01NZxi1gAgwGgcEwWgQUSeI/v////ffPwYGhq8/f3RsWi2THWdeU/Ds/VsGBgaIOB7ASLAs+vvvHzMTyB3bzp+uX7Pk9otnimLiv/78+fn7966qViUxCbgCciz48+8vCxPzh29fa1YuWnJkHwMDQ2t4fIaL18dvX6tXLtpy/uT+2k4VcUk8duCzAGL66Xu3cuZNu/n8qbaM/NKc0n///x+6fiXC0o6DjW3Gnm1Td23ZVt4oKyz67/9/JkZGEiyAOGrx4X1Fi2f9/vs3zs65IyKxf9v6x+/etITF7bx4VlJQyElbf/3pYyuOHZycmCXKywcyDsMOdH/9////z7+/f/79ZWZi6tq8JnfBdGZm5glx6c2hsaET295++Tw5IbN785p///+bKastOrQ30NSqNSJh16Wzv//+/fPv3////3H6AM2PjWuX9m/bwMDAoCgmHmBiOWvvjq8/fzhq6V1+/ODN509R1g4nbt9w1jHwMTLTlpEXATsfDpCNQg+iG8+eHL99ffuFM7sunWNhYmZnZWVnZf3154+kgCAPB+fvv385WFn//P378tMHBgaGLz++f/3xg52VTU5YRFdO0UZd20JVQ0NKBrsP9l29ePru7QevX7KxsCiIiuvIyovy8Qtx8/JxcfFycGImkt9//37/9fPT92+vPn54+ObVg9evHr159fPPb3kRcQtVdXtNXQKRTC3ARFPTGUYtIAKMxgFBMBpEBAHNgwgAZHAR/7rKStcAAAAASUVORK5CYII=">
+    <link rel="icon" href="/favicon.ico?v=3" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32.png') }}?v=3">
+    <link rel="icon" type="image/png" sizes="180x180" href="{{ url_for('static', filename='favicon.png') }}?v=3">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.png') }}?v=3">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='dockd.css') }}">
 </head>
-<body>
+<body class="app-shell">
 
     <!-- ====== LOGIN OVERLAY ====== -->
     <div id="login-overlay">
-        <h1 style="margin-bottom: 0;">DOCKD</h1>
-        <p style="opacity: 0.7; margin-top: 5px;">LOGIN</p>
-        <div class="pass-box" style="margin-top: 24px;">
-            <input type="text" id="login-user-input" class="pass-input" placeholder="USERNAME" autocomplete="off" style="margin-bottom: 12px;">
+        <h1>DOCKD</h1>
+        <p>LOGIN</p>
+        <div class="pass-box">
+            <input type="text" id="login-user-input" class="pass-input" placeholder="USERNAME" autocomplete="off">
             <input type="password" id="pass-input" class="pass-input" placeholder="PASSWORD" autocomplete="off">
-            <div id="login-error" style="color:#dc2626; font-weight:700; font-size:0.95rem; margin-top:12px; min-height:22px;"></div>
-            <button onclick="attemptLogin()" style="margin-top: 16px; background: var(--brand-red); color: white; border: none; padding: 16px 40px; font-size: 18px; font-weight: 800; border-radius: 8px; cursor: pointer; width: 100%;">LOGIN</button>
+            <div id="login-error" style="min-height:22px"></div>
+            <button class="btn btn-red" onclick="attemptLogin()">LOGIN</button>
         </div>
     </div>
 
@@ -230,166 +33,162 @@
 
     <!-- ====== SHIP ORDERS MODALS ====== -->
     <div id="choice-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid var(--brand-red);">
-            <h2 style="color:var(--brand-red); margin-top:0;">SELECT BOX</h2>
-            <p style="margin-bottom:20px;">Multiple open shipments found.</p>
-            <div id="choice-list" style="display:flex; flex-direction:column; gap:10px;"></div>
-            <button onclick="document.getElementById('choice-modal').style.display='none'" style="margin-top:20px; background:none; border:none; text-decoration:underline; cursor:pointer;">Cancel</button>
+        <div class="modal-content">
+            <h2>SELECT BOX</h2>
+            <p>Multiple open shipments found.</p>
+            <div id="choice-list" style="display:flex; flex-direction:column; gap:10px"></div>
+            <button class="btn" onclick="document.getElementById('choice-modal').style.display='none'">Cancel</button>
         </div>
     </div>
 
     <div id="pickup-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 6px solid #d35400;">
+        <!-- One heading, not two. "STOP" above "LOCAL PICKUP" was shouting
+             the same thing twice: the modal is already blocking, red, and
+             the only way past it is the confirm button. -->
+        <div class="modal-content modal-centered">
             <span class="close-x" onclick="confirmPickup()">&times;</span>
-            <h1 style="color: #d35400; font-size: 60px; margin: 0; font-weight: 800;">STOP</h1>
-            <h2 style="margin: 10px 0 20px 0; font-size: 30px; color: #333;">LOCAL PICKUP</h2>
-            <p style="font-size: 18px; margin-bottom: 5px;">This is a <strong>Local Pickup</strong> order.</p>
-            <p style="font-size: 18px; color: #666;">Do not print a label. Place in Pickup Bin.</p>
-            <button onclick="confirmPickup()" style="background: #d35400; color: white; border: none; padding: 20px 40px; font-size: 20px; font-weight: 800; border-radius: 8px; cursor: pointer; margin-top: 25px;">CONFIRM & CLEAR</button>
+            <h2>LOCAL PICKUP</h2>
+            <p>This is a <strong>Local Pickup</strong> order.</p>
+            <p>Do not print a label. Place in Pickup Bin.</p>
+            <button class="btn btn-red" onclick="confirmPickup()">CONFIRM &amp; CLEAR</button>
         </div>
     </div>
 
     <div id="link-modal" class="modal-overlay">
         <div class="modal-content link-modal-content">
             <span class="close-x" onclick="closeLinkModal()">&times;</span>
-            <h1 style="color: #6E6259; margin: 0;">MERGE ORDER</h1>
-            <p style="color: #666; margin-bottom: 12px;">Scan order - verify items - then scan tracking.</p>
-            <div id="link-step-order" style="text-align: left;">
-                <label style="font-weight: 800; display: block;">1. SCAN CHILD ORDER</label>
-                <input type="text" id="link-scan-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID..." autocomplete="off">
+            <h1>MERGE ORDER</h1>
+            <p>Scan order - verify items - then scan tracking.</p>
+            <div id="link-step-order">
+                <label style="display: block">1. SCAN CHILD ORDER</label>
+                <input type="text" id="link-scan-input" class="pass-input" style="width: 100%; box-sizing: border-box" placeholder="Scan Order ID..." autocomplete="off">
             </div>
-            <div id="link-step-verify" style="display: none; flex: 1; min-height: 0; flex-direction: column;">
-                <p style="margin: 0 0 8px 0;"><strong>Order:</strong> <span id="link-order-display">-</span></p>
-                <label style="font-weight: 800; display: block; margin-bottom: 6px;">2. SCAN ITEMS TO VERIFY</label>
+            <div id="link-step-verify" style="display: none; flex: 1; min-height: 0; flex-direction: column">
+                <p><strong>Order:</strong> <span id="link-order-display">-</span></p>
+                <label style="display: block">2. SCAN ITEMS TO VERIFY</label>
                 <div id="link-item-list" class="link-item-list"></div>
-                <input type="text" id="link-verify-input" class="pass-input" style="width: 100%; box-sizing: border-box; margin-top: 10px;" placeholder="Scan each item..." autocomplete="off">
+                <input type="text" id="link-verify-input" class="pass-input" style="width: 100%; box-sizing: border-box" placeholder="Scan each item..." autocomplete="off">
             </div>
-            <div id="link-step-tracking" style="display: none; text-align: left;">
-                <p style="margin: 0 0 12px 0;"><strong>Order:</strong> <span id="link-order-display2">-</span></p>
-                <label style="font-weight: 800; display: block;">3. SCAN TRACKING #</label>
-                <input type="text" id="link-track-input" class="pass-input" style="width: 100%; box-sizing: border-box; margin-bottom: 12px;" placeholder="Scan Tracking Label..." autocomplete="off">
-                <button onclick="submitLink()" id="btn-link-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">LINK TRACKING</button>
+            <div id="link-step-tracking" style="display: none">
+                <p><strong>Order:</strong> <span id="link-order-display2">-</span></p>
+                <label style="display: block">3. SCAN TRACKING #</label>
+                <input type="text" id="link-track-input" class="pass-input" style="width: 100%; box-sizing: border-box" placeholder="Scan Tracking Label..." autocomplete="off">
+                <button class="btn btn-red" onclick="submitLink()" id="btn-link-submit">LINK TRACKING</button>
             </div>
-            <div id="link-choice-box" style="display: none; margin-top: 10px;">
-                <p style="font-weight: 800; margin-bottom: 8px;">Multiple open shipments - select one:</p>
-                <div id="link-choice-list" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            <div id="link-choice-box" style="display: none">
+                <p>Multiple open shipments - select one:</p>
+                <div id="link-choice-list" style="display: flex; flex-direction: column; gap: 8px"></div>
             </div>
         </div>
     </div>
 
     <div id="reprint-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #6E6259; width: 500px;">
+        <div class="modal-content">
             <span class="close-x" onclick="closeReprintModal()">&times;</span>
-            <h1 style="color: #6E6259; margin: 0;">REPRINT LABEL</h1>
-            <p style="color: #666; margin-bottom: 20px;">Scan order to re-print existing label.</p>
-            <div style="text-align: left; margin-bottom: 25px;">
-                <label style="font-weight: 800; display: block;">SCAN ORDER ID</label>
-                <input type="text" id="reprint-order-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID...">
+            <h1>REPRINT LABEL</h1>
+            <p>Scan order to re-print existing label.</p>
+            <div>
+                <label style="display: block">SCAN ORDER ID</label>
+                <input type="text" id="reprint-order-input" class="pass-input" style="width: 100%; box-sizing: border-box" placeholder="Scan Order ID...">
             </div>
-            <button onclick="submitReprint()" id="btn-reprint-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">PRINT LABEL</button>
+            <button class="btn btn-red" onclick="submitReprint()" id="btn-reprint-submit">PRINT LABEL</button>
         </div>
     </div>
 
     <div id="void-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #6E6259; width: 500px;">
+        <div class="modal-content">
             <span class="close-x" onclick="closeVoidModal()">&times;</span>
-            <h1 style="color: #6E6259; margin: 0;">VOID LABEL</h1>
-            <p style="color: #666; margin-bottom: 20px;">Scan order to VOID shipping label.</p>
-            <div style="text-align: left; margin-bottom: 25px;">
-                <label style="font-weight: 800; display: block;">SCAN ORDER ID</label>
-                <input type="text" id="void-order-input" class="pass-input" style="width: 100%; box-sizing: border-box;" placeholder="Scan Order ID...">
+            <h1>VOID LABEL</h1>
+            <p>Scan order to VOID shipping label.</p>
+            <div>
+                <label style="display: block">SCAN ORDER ID</label>
+                <input type="text" id="void-order-input" class="pass-input" style="width: 100%; box-sizing: border-box" placeholder="Scan Order ID...">
             </div>
-            <button onclick="submitVoid()" id="btn-void-submit" style="background: var(--brand-red); color: white; border: none; padding: 15px 30px; font-size: 18px; font-weight: 800; border-radius: 6px; cursor: pointer; width: 100%;">VOID LABEL</button>
+            <button class="btn btn-red" onclick="submitVoid()" id="btn-void-submit">VOID LABEL</button>
         </div>
     </div>
 
     <div id="carrier-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #e67e22; width: 480px; padding: 40px 44px;">
-            <h1 style="color: #e67e22; margin: 0 0 6px 0; font-size: 28px; text-align: center;">CARRIER SUGGESTION</h1>
-            <p id="carrier-reason" style="color: #555; font-size: 15px; margin-bottom: 14px;"></p>
-            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 14px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="carrier-order-total">-</span></p>
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="carrier-ca-shipping">-</span></p>
+        <div class="modal-content">
+            <h1>CARRIER SUGGESTION</h1>
+            <p id="carrier-reason"></p>
+            <div style="display: flex; gap: 16px; justify-content: center">
+                <p><strong>Order Total:</strong> <span id="carrier-order-total">-</span></p>
+                <p><strong>CA Shipping Paid:</strong> <span id="carrier-ca-shipping">-</span></p>
             </div>
-            <div id="carrier-wizard" style="background: #fffbe6; border: 1px solid #ffe0a0; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; text-align: left; font-size: 13px; line-height: 1.6; color: #555;"></div>
-            <div style="display: flex; gap: 14px; justify-content: center;">
-                <button id="btn-carrier-suggested" onclick="shipWithCarrier('suggested')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white;"></button>
-                <button id="btn-carrier-original" onclick="shipWithCarrier('original')" style="flex: 1; padding: 22px 10px; font-size: 16px; font-weight: 700; border-radius: 12px; border: 2px solid #ccc; cursor: pointer; background: #f5f5f5; color: #555;"></button>
+            <div id="carrier-wizard"></div>
+            <div style="display: flex; gap: 14px; justify-content: center">
+                <button id="btn-carrier-suggested" onclick="shipWithCarrier('suggested')" style="flex: 1"></button>
+                <button class="btn" id="btn-carrier-original" onclick="shipWithCarrier('original')"></button>
             </div>
         </div>
     </div>
 
     <div id="amazon-carrier-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #ff9900; width: 500px; padding: 40px 44px;">
-            <h1 style="color: #ff9900; margin: 0 0 6px 0; font-size: 26px;">AMAZON ORDER</h1>
-            <p style="color: #555; font-size: 15px; margin-bottom: 6px;">Shipping method detected:</p>
-            <p id="amazon-method-display" style="color: #333; font-size: 17px; font-weight: 700; margin-bottom: 14px;"></p>
-            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="amazon-order-total">-</span></p>
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="amazon-ca-shipping">-</span></p>
+        <div class="modal-content">
+            <h1>AMAZON ORDER</h1>
+            <p>Shipping method detected:</p>
+            <p id="amazon-method-display"></p>
+            <div style="display: flex; gap: 16px; justify-content: center">
+                <p><strong>Order Total:</strong> <span id="amazon-order-total">-</span></p>
+                <p><strong>CA Shipping Paid:</strong> <span id="amazon-ca-shipping">-</span></p>
             </div>
-            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Select a carrier for this shipment:</p>
-            <div style="display: flex; gap: 14px; justify-content: center;">
-                <button onclick="selectAmazonCarrier('USPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #003087;">USPS</button>
-                <button onclick="selectAmazonCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS</button>
-            </div>
+            <p class="prompt-hint">Amazon names no carrier. Pick a service to ship it.</p>
+            <div class="prompt-rates" id="amazon-rates"></div>
         </div>
     </div>
 
     <div id="highvalue-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #dc2626; width: 500px; padding: 40px 44px;">
-            <h1 style="color: #dc2626; margin: 0 0 6px 0; font-size: 26px;">HIGH VALUE ORDER</h1>
-            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="highvalue-total">-</span></p>
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="highvalue-ca-shipping">-</span></p>
+        <div class="modal-content">
+            <h1>HIGH VALUE ORDER</h1>
+            <div style="display: flex; gap: 16px; justify-content: center">
+                <p><strong>Order Total:</strong> <span id="highvalue-total">-</span></p>
+                <p><strong>CA Shipping Paid:</strong> <span id="highvalue-ca-shipping">-</span></p>
             </div>
-            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">USPS shipping detected - switch carrier for claims protection?</p>
-            <div style="display: flex; gap: 14px; justify-content: center;">
-                <button onclick="selectHighValueCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS Ground</button>
-                <button onclick="selectHighValueCarrier('FEDEX_ONE_RATE_2DAY')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4D148C;">FedEx 2Day</button>
-            </div>
+            <p class="prompt-hint">Pick a service to ship it. Prices and transit are live quotes.</p>
+            <div class="prompt-rates" id="highvalue-rates"></div>
         </div>
     </div>
 
     <div id="change-carrier-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #2563eb; width: 500px; padding: 40px 44px;">
+        <div class="modal-content">
             <span class="close-x" onclick="closeChangeCarrierModal()">&times;</span>
-            <h1 style="color: #2563eb; margin: 0 0 6px 0; font-size: 26px;">CHANGE SHIPPING METHOD</h1>
-            <p style="color: #555; font-size: 15px; margin-bottom: 6px;">Current: <strong id="change-carrier-current" style="color: #333;"></strong></p>
-            <div style="display: flex; gap: 16px; justify-content: center; margin-bottom: 18px; background: #f8f8f8; border-radius: 8px; padding: 10px 16px;">
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>Order Total:</strong> <span id="change-order-total">-</span></p>
-                <p style="margin: 0; font-size: 14px; color: #555;"><strong>CA Shipping Paid:</strong> <span id="change-ca-shipping">-</span></p>
+            <h1>CHANGE SHIPPING METHOD</h1>
+            <p>Current: <strong id="change-carrier-current"></strong></p>
+            <div style="display: flex; gap: 16px; justify-content: center">
+                <p><strong>Order Total:</strong> <span id="change-order-total">-</span></p>
+                <p><strong>CA Shipping Paid:</strong> <span id="change-ca-shipping">-</span></p>
             </div>
-            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Select a new carrier:</p>
-            <div style="display: flex; gap: 14px; justify-content: center;">
-                <button onclick="applyManualCarrier('USPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #003087;">USPS</button>
-                <button onclick="applyManualCarrier('UPS')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4a2400;">UPS</button>
-                <button onclick="applyManualCarrier('FEDEX_ONE_RATE_2DAY')" style="flex: 1; padding: 22px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #4D148C;">FedEx 2Day</button>
+            <p>Select a new carrier:</p>
+            <div style="display: flex; gap: 14px; justify-content: center">
+                <button class="btn btn-usps" onclick="applyManualCarrier('USPS')">USPS</button>
+                <button class="btn btn-ups" onclick="applyManualCarrier('UPS')">UPS</button>
+                <button class="btn btn-fdx" onclick="applyManualCarrier('FEDEX_ONE_RATE_2DAY')">FedEx 2Day</button>
             </div>
         </div>
     </div>
 
     <div id="ob-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 5px solid #2563eb; width: 420px; padding: 40px 44px;">
-            <h1 style="color: #2563eb; margin: 0 0 10px 0; font-size: 26px;">ORIGINAL BOX</h1>
-            <p style="color: #555; font-size: 15px; margin-bottom: 20px;">Enter box dimensions (inches):</p>
-            <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 24px;">
-                <div style="flex: 1; text-align: center;">
-                    <label style="font-weight: 700; font-size: 14px; color: #555;">Length</label>
-                    <input type="number" id="ob-length" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+        <div class="modal-content">
+            <h1>ORIGINAL BOX</h1>
+            <p>Enter box dimensions (inches):</p>
+            <div style="display: flex; gap: 12px; justify-content: center">
+                <div style="flex: 1">
+                    <label>Length</label>
+                    <input type="number" id="ob-length" min="1" max="120" step="0.5" style="width: 100%" />
                 </div>
-                <div style="flex: 1; text-align: center;">
-                    <label style="font-weight: 700; font-size: 14px; color: #555;">Width</label>
-                    <input type="number" id="ob-width" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+                <div style="flex: 1">
+                    <label>Width</label>
+                    <input type="number" id="ob-width" min="1" max="120" step="0.5" style="width: 100%" />
                 </div>
-                <div style="flex: 1; text-align: center;">
-                    <label style="font-weight: 700; font-size: 14px; color: #555;">Height</label>
-                    <input type="number" id="ob-height" min="1" max="120" step="0.5" style="width: 100%; padding: 14px 8px; font-size: 22px; font-weight: 700; text-align: center; border: 2px solid #ccc; border-radius: 8px; margin-top: 6px;" />
+                <div style="flex: 1">
+                    <label>Height</label>
+                    <input type="number" id="ob-height" min="1" max="120" step="0.5" style="width: 100%" />
                 </div>
             </div>
-            <div style="display: flex; gap: 14px; justify-content: center;">
-                <button onclick="confirmOB()" style="flex: 1; padding: 18px 10px; font-size: 20px; font-weight: 800; border-radius: 12px; border: none; cursor: pointer; color: white; background: #2563eb;">CONFIRM</button>
-                <button onclick="cancelOB()" style="flex: 1; padding: 18px 10px; font-size: 16px; font-weight: 700; border-radius: 12px; border: 2px solid #ccc; cursor: pointer; background: #f5f5f5; color: #555;">CANCEL</button>
+            <div style="display: flex; gap: 14px; justify-content: center">
+                <button class="btn" onclick="confirmOB()">CONFIRM</button>
+                <button class="btn" onclick="cancelOB()">CANCEL</button>
             </div>
         </div>
     </div>
@@ -397,46 +196,50 @@
     <div id="error-modal" class="modal-overlay">
         <div class="modal-content">
             <span class="close-x" onclick="closeErrorModal()">&times;</span>
-            <h1 style="color:var(--error-red); margin:0;">ERROR</h1>
-            <p id="error-msg" style="text-align: left; font-family: monospace; font-size: 12px;">...</p>
+            <h1>ERROR</h1>
+            <p id="error-msg">...</p>
         </div>
     </div>
 
     <div id="cancelled-modal" class="modal-overlay">
-        <div class="modal-content" style="border: 6px solid #dc2626; width: 520px; padding: 48px 44px;">
-            <h1 style="color: #dc2626; font-size: 60px; margin: 0; font-weight: 800;">STOP</h1>
-            <h2 style="margin: 10px 0 12px 0; font-size: 28px; color: #dc2626; border: none; padding: 0; letter-spacing: 0.02em; text-transform: none;">ORDER CANCELLED</h2>
-            <p style="font-size: 17px; color: #333; margin-bottom: 6px;">This order was <strong>cancelled by the customer</strong>.</p>
-            <p style="font-size: 15px; color: #555; margin-bottom: 6px;">Amazon Order: <strong id="cancelled-amazon-id" style="color: #dc2626;">-</strong></p>
-            <p style="font-size: 15px; color: #555; margin-bottom: 24px;">Cancelled: <strong id="cancelled-at-display">-</strong></p>
-            <p style="font-size: 16px; color: #dc2626; font-weight: 700; margin-bottom: 24px;">DO NOT SHIP -- Pull this order from the line.</p>
-            <button onclick="confirmCancelled()" style="background: #dc2626; color: white; border: none; padding: 20px 40px; font-size: 20px; font-weight: 800; border-radius: 12px; cursor: pointer; width: 100%;">CONFIRM & CLEAR</button>
+        <div class="modal-content">
+            <h1>STOP</h1>
+            <h2>ORDER CANCELLED</h2>
+            <p>This order was <strong>cancelled by the customer</strong>.</p>
+            <p>Amazon Order: <strong id="cancelled-amazon-id">-</strong></p>
+            <p>Cancelled: <strong id="cancelled-at-display">-</strong></p>
+            <p>DO NOT SHIP -- Pull this order from the line.</p>
+            <button class="btn btn-red" onclick="confirmCancelled()">CONFIRM & CLEAR</button>
         </div>
     </div>
 
     <div id="success-modal" class="modal-overlay">
         <div class="modal-content">
-            <h1 style="color:var(--success-green); margin:0;">Success!</h1>
+            <h1>Success!</h1>
             <p id="success-sub">Printing Label...</p>
         </div>
     </div>
 
     <div id="backend-health-modal" class="modal-overlay">
-        <div class="modal-content" style="max-width:480px;">
-            <h2 style="margin-top:0; color:var(--brand-red); letter-spacing:1px;">UPSTREAM CONNECTIVITY</h2>
-            <div id="backend-health-details" style="text-align:left; font-family:monospace; font-size:13px; line-height:1.7; background:rgba(0,0,0,0.04); padding:14px 16px; border-radius:6px; margin:14px 0;">Loading...</div>
-            <button onclick="document.getElementById('backend-health-modal').style.display='none'" style="background:var(--brand-red); color:white; border:none; padding:10px 24px; font-weight:700; border-radius:6px; cursor:pointer;">Close</button>
+        <div class="modal-content" style="max-width:480px">
+            <h2>UPSTREAM CONNECTIVITY</h2>
+            <div id="backend-health-details">Loading...</div>
+            <button class="btn btn-red" onclick="document.getElementById('backend-health-modal').style.display='none'">Close</button>
         </div>
     </div>
 
     <!-- ====== SIDEBAR ====== -->
     <aside class="sidebar">
-        <div class="sidebar-logo">DOCKD <span>Shipping</span></div>
+        <div class="sidebar-logo">
+            <img class="brand-mark" src="{{ url_for('static', filename='logo-mark.png') }}"
+                 alt="AvidMax">
+            <span class="brand-text">DOCKD <span>Shipping</span></span>
+        </div>
         <div class="fedex-badge">FedEx</div>
         <div class="module-nav">
-            <button type="button" class="module-btn" id="mod-btn-ship" onclick="showShipOrders()">Ship Orders</button>
-            <button type="button" class="module-btn" id="mod-btn-bin" onclick="showBin()">Bin Sticker</button>
-            <button type="button" class="module-btn" id="mod-btn-labels" onclick="showLabels()">Item Labels</button>
+            <button type="button" class="module-btn" id="mod-btn-ship" onclick="showShipOrders()">Ship</button>
+            <button type="button" class="module-btn" id="mod-btn-bin" onclick="showBin()">Bin</button>
+            <button type="button" class="module-btn" id="mod-btn-labels" onclick="showLabels()">Labels</button>
         </div>
         <nav class="sidebar-nav">
             <div id="ship-nav">
@@ -444,27 +247,27 @@
                 <button type="button" class="sidebar-btn" onclick="openVoidModal()">VOID</button>
                 <button type="button" class="sidebar-btn" onclick="openLinkModal()">LINK</button>
                 <button type="button" class="sidebar-btn" onclick="openReprintModal()">REPRINT</button>
-                <button type="button" class="sidebar-btn" id="btn-reprint-last" onclick="reprintLast()" style="opacity:0.4; pointer-events:none;">REPRINT LAST</button>
-                <button type="button" class="sidebar-btn" id="btn-change-carrier" onclick="openChangeCarrierModal()" style="opacity:0.4; pointer-events:none;">CHANGE SHIP</button>
+                <button type="button" class="sidebar-btn" id="btn-reprint-last" onclick="reprintLast()" style="pointer-events:none">REPRINT LAST</button>
+                <button type="button" class="sidebar-btn" id="btn-change-carrier" onclick="openChangeCarrierModal()" style="pointer-events:none">CHANGE SHIP</button>
                 <button type="button" class="sidebar-btn" id="btn-adult-sig" onclick="toggleAdultSignature()" title="Require adult signature on the next label only">ADULT SIG: <span id="adult-sig-state">OFF</span></button>
             </div>
         </nav>
-        <div id="ship-count-display" class="ship-count-bubble" style="display:none;">
+        <div id="ship-count-display" class="ship-count-bubble" style="display:none">
           <div class="ship-count-label">SHIPPED TODAY</div>
           <div id="ship-count-number" class="ship-count-number">0</div>
         </div>
         <div class="sidebar-spacer"></div>
         <div class="sidebar-footer">
             <div class="user-badge" id="display-user">...</div>
-            <div id="station-label-display" style="text-align:center; font-size:0.7rem; color:rgba(255,255,255,0.5); letter-spacing:1px; text-transform:uppercase; padding:4px 0;"></div>
-            <div id="backend-health-row" onclick="showBackendHealthModal()" style="display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; padding:4px 0; font-size:0.65rem; color:rgba(255,255,255,0.55); letter-spacing:1px; text-transform:uppercase;" title="Click for details">
-                <span id="backend-health-dot" style="width:9px; height:9px; border-radius:50%; background:#666; display:inline-block;"></span>
+            <div id="station-label-display"></div>
+            <div id="backend-health-row" onclick="showBackendHealthModal()" style="display:flex; align-items:center; justify-content:center; gap:6px" title="Click for details">
+                <span id="backend-health-dot" style="height:9px; display:inline-block"></span>
                 <span id="backend-health-text">Sentry: checking</span>
             </div>
-            <a class="sidebar-btn admin-only" href="/settings" style="text-decoration:none; display:none;">SETTINGS</a>
+            <a class="sidebar-btn admin-only" href="/settings" style="display:none">SETTINGS</a>
             <button type="button" class="sidebar-btn" onclick="logout()">LOGOUT</button>
-            <button type="button" class="sidebar-btn exit-app-btn admin-only" onclick="shutdownApp()" style="display:none;">EXIT</button>
-            <div style="text-align:center;font-size:0.65rem;color:rgba(255,255,255,0.3);margin-top:6px;">v{{ config.VERSION }}</div>
+            <button type="button" class="sidebar-btn exit-app-btn admin-only" onclick="shutdownApp()" style="display:none">EXIT</button>
+            <div>v{{ config.VERSION }}</div>
         </div>
     </aside>
 
@@ -472,31 +275,106 @@
     <main class="app-main">
 
         <!-- DASHBOARD HUB -->
-        <div id="dashboard-panel" style="display:none;"></div>
+        <div id="dashboard-panel" style="display:none"></div>
 
         <!-- SHIP ORDERS PANEL -->
-        <div id="ship-panel" style="display:none; flex-direction:column; height:100%;">
+        <div id="ship-panel" style="display:none; flex-direction:column; height:100%">
             <div class="scan-container">
-                <input type="text" id="main-input" placeholder="Scan Order ID..." autocomplete="off">
+                <div class="scan-field">
+                    <!-- handleScan() routes this one field by content: order id
+                         while nothing is loaded, then item sku/upc, then a box
+                         code, plus the literals OB and yoda. Printing the
+                         current mode costs nothing and saves the operator
+                         having to hold it in their head. -->
+                    <div class="scan-expect">
+                        Expecting <b id="scan-expect-what">order ID</b>
+                        <span class="scan-hint" id="scan-expect-hint">scan the picking ticket</span>
+                    </div>
+                    <input type="text" id="main-input" placeholder="Scan Order ID..." autocomplete="off">
+                </div>
+            </div>
+
+            <!-- ====== GATE SPINE ======
+                 There is no ship button because there is no ship action: the
+                 box scan reads the scale and posts /ship_order itself. The
+                 spine is what replaces it, showing which gate is open and
+                 flagging gate 3 red once a box scan will buy a label. -->
+            <div class="spine" id="gate-spine">
+                <div class="gate" id="gate-order">
+                    <span class="gate-no">1</span>
+                    <span>
+                        <span class="gate-t">Order</span>
+                        <span class="gate-s" id="gate-order-sub">scan to load</span>
+                    </span>
+                </div>
+                <div class="gate" id="gate-items">
+                    <span class="gate-no">2</span>
+                    <span>
+                        <span class="gate-t">Verify items</span>
+                        <span class="gate-s" id="gate-items-sub">locked</span>
+                    </span>
+                </div>
+                <div class="gate" id="gate-box">
+                    <span class="gate-no">3</span>
+                    <span>
+                        <span class="gate-t">Box scan</span>
+                        <span class="gate-s" id="gate-box-sub">locked until items clear</span>
+                    </span>
+                    <span class="gate-auto">Auto ship</span>
+                </div>
             </div>
             <div class="workspace">
                 <div class="card">
                     <h2>Items to Pack</h2>
-                    <div class="order-info-box" style="display: flex; gap: 32px;">
-                        <div style="flex: 1;">
-                            <p><strong>Order:</strong> <span id="order-id-display">Waiting for scan...</span> <span id="intl-pill" style="display:none; background:#8e2716; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:700; margin-left:8px;">INTL</span></p>
-                            <p><strong>Customer:</strong> <span id="cust-name">Waiting for scan...</span></p>
-                            <p><strong>Phone:</strong> <span id="cust-phone">Waiting for scan...</span></p>
-                            <p><strong>Address:</strong> <span id="cust-addr">Waiting for scan...</span></p>
+                    <!-- Five label/value rows stacked down the left half
+                         left most of the panel empty. These are five short
+                         facts, so they read better as a field grid that uses
+                         the width, with the address given the room it needs. -->
+                    <div class="order-info-box">
+                        <div class="order-fields">
+                            <div class="ocol">
+                                <div class="ofield">
+                                    <span class="ol">Order</span>
+                                    <span class="ov" id="order-id-display">Waiting for scan...</span>
+                                    <span id="intl-pill" style="display:none">INTL</span>
+                                </div>
+                                <div class="ofield">
+                                    <span class="ol">Customer</span>
+                                    <span class="ov" id="cust-name">Waiting for scan...</span>
+                                </div>
+                            </div>
+                            <div class="ocol ocol-address">
+                                <div class="ofield">
+                                    <span class="ol">Address</span>
+                                    <span class="ov" id="cust-addr">Waiting for scan...</span>
+                                </div>
+                            </div>
+                            <div class="ocol">
+                                <div class="ofield">
+                                    <span class="ol">Phone</span>
+                                    <span class="ov" id="cust-phone">Waiting for scan...</span>
+                                </div>
+                                <div class="ofield">
+                                    <span class="ol">Ship Via</span>
+                                    <span class="ov" id="ship-via">Waiting for scan...</span>
+                                </div>
+                            </div>
                         </div>
-                        <div style="text-align: right; white-space: nowrap;">
-                            <p><strong>Ship Via:</strong> <span id="ship-via">Waiting for scan...</span></p>
-                            <p><strong>Order Total:</strong> <span id="order-total-display">-</span></p>
-                            <p><strong>CA Shipping Paid:</strong> <span id="ca-shipping-paid">-</span></p>
+                        <div class="order-right">
+                            <div class="money-row">
+                                <div class="money-stat">
+                                    <span class="money-l">Order Total</span>
+                                    <span class="money-v" id="order-total-display">$0.00</span>
+                                </div>
+                                <div class="money-stat">
+                                    <span class="money-l">Shipping Paid</span>
+                                    <span class="money-v paid" id="ca-shipping-paid">$0.00</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="item-list" id="item-list">
-                        <div style="padding:40px; text-align:center; color:#999; font-style:italic; grid-column: span 2;">Scan Order ID to begin</div>
+                        <div style="font-style:italic; grid-column: span 2">Scan Order ID to begin</div>
                     </div>
                 </div>
                 <div class="card" id="box-card">
@@ -504,11 +382,10 @@
                     <div class="box-row">
                         <div class="current-box" id="box-display">WAITING</div>
                         <div class="scale-section" id="scale-section">
-                            <div class="weight-display" id="weight-val">---</div>
-                            <div class="weight-unit">LBS</div>
+                            <div class="weight-display" id="weight-val">---</div><div class="weight-unit">lbs</div>
                         </div>
                     </div>
-                    <h2>Station Log</h2>
+                    <h2 class="on-dark">Station Log</h2>
                     <div class="status-log" id="status-log">
                         <div class="log-entry">> System Ready</div>
                     </div>
@@ -523,7 +400,7 @@
             <p class="module-sub">Scan a UPC or type a SKU. A 4x2 sticker with the SKU + barcode prints to the station Zebra.</p>
             <div class="module-card">
                 <input type="text" id="bin-scan-input" class="scan-input" placeholder="Scan or type SKU / UPC..." autocomplete="off">
-                <div id="bin-result" class="module-result" style="display:none;"></div>
+                <div id="bin-result" class="module-result" style="display:none"></div>
             </div>
         </div>
 
@@ -559,9 +436,9 @@
                     <button type="button" class="print-btn" id="thread-print-btn" onclick="printThreadLabels()">Print Labels</button>
                 </div>
 
-                <div id="labels-mode-lookup" style="display:none;">
+                <div id="labels-mode-lookup" style="display:none">
                     <div class="labels-grid">
-                        <div style="grid-column: span 2;">
+                        <div style="grid-column: span 2">
                             <label for="lookup-sku">SKU or UPC</label>
                             <input type="text" id="lookup-sku" placeholder="Scan or type..." autocomplete="off">
                         </div>
@@ -573,7 +450,7 @@
                     <button type="button" class="print-btn" id="lookup-print-btn" onclick="printLookupLabels()">Print Labels</button>
                 </div>
 
-                <div id="labels-result" class="module-result" style="display:none;"></div>
+                <div id="labels-result" class="module-result" style="display:none"></div>
             </div>
         </div>
 
@@ -1127,7 +1004,7 @@
         // ====== SHIP ORDERS - SCAN LOGIC ======
         document.body.onclick = (e) => {
             const selection = window.getSelection();
-            if (selection.toString().length > 0) return;
+            if (selection.toString().length> 0) return;
             if (activePanel === 'ship' && currentUser && !e.target.closest('input') && !e.target.closest('button') && !e.target.closest('a')) {
                 document.getElementById('main-input').focus();
             }
@@ -1175,7 +1052,7 @@
             }
 
             const isOB = val.toUpperCase() === 'OB';
-            const isBoxNum = (!isNaN(val) && parseInt(val) >= 1 && parseInt(val) <= 22);
+            const isBoxNum = (!isNaN(val) && parseInt(val)>= 1 && parseInt(val) <= 22);
             const isSpecialBox = ['SMALLBUB', 'LARGEBUB', 'SMALLPAK', 'LARGEPAK'].includes(val);
             const isFedExCode = val.startsWith("FDX") || val === 'FXENV' || val === 'FXPAK';
 
@@ -1256,11 +1133,16 @@
                     changeBtn.style.opacity = '1'; changeBtn.style.pointerEvents = 'auto';
 
                     const sm = shipMethod.toLowerCase();
+                    // Local pickup still stops the operator here, because it
+                    // is not a carrier choice: the order never gets a label
+                    // at all, so there is no point packing a box for it.
+                    //
+                    // The Amazon and high-value carrier prompts used to fire
+                    // on this line too. They moved to gate 3 (server side, in
+                    // _carrier_prompt_for) because neither can be priced
+                    // before the scale is read, and both were asking the
+                    // operator to spend money with no number on screen.
                     if (sm.includes('pick up') || sm.includes('pickup') || sm.includes('will call')) showPickupModal();
-                    else if (AMAZON_METHODS.includes(sm)) { showAmazonCarrierModal(shipMethod); }
-                    else if (currentOrderTotal >= HIGH_VALUE_THRESHOLD && !sm.includes('fedex') && !sm.includes('ups') && (sm.includes('usps') || sm.includes('ground advantage') || sm.includes('priority') || sm.includes('first class'))) {
-                        showHighValueModal(currentOrderTotal);
-                    }
                     if (sm.includes('fedex')) { isFedExMode = true; activateFedExUI(); }
                     else { isFedExMode = false; resetBoxUI(); }
                     log('Order Loaded.');
@@ -1276,8 +1158,10 @@
         function checkCompletion() {
             const current = getVerifiedCount();
             const total = getTotalItems();
-            if (current >= total && total > 0) { unlockBoxUI(); return true; }
-            return false;
+            const done = current>= total && total> 0;
+            if (done) { unlockBoxUI(); }
+            syncFlowUi();
+            return done;
         }
 
         function manualOverride(index) {
@@ -1296,7 +1180,7 @@
             if (!scannedInput) return;
             const inputClean = scannedInput.trim();
             let item = itemsNeeded.find(i => {
-                if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
+                if (parseInt(i.scanned_qty)>= parseInt(i.quantity)) return false;
                 if (i.sku === inputClean) return true;
                 if (i.upc && i.upc === inputClean) return true;
                 if (i.item.refName === inputClean) return true;
@@ -1311,27 +1195,28 @@
             const list = document.getElementById('item-list');
             list.innerHTML = '';
             itemsNeeded.forEach((i, index) => {
-                const isComplete = parseInt(i.scanned_qty) >= parseInt(i.quantity);
+                const isComplete = parseInt(i.scanned_qty)>= parseInt(i.quantity);
                 const div = document.createElement('div');
                 div.className = `item-row ${isComplete ? 'completed' : ''}`;
                 const showOverride = overrideExceptions.has(i.sku) && !isComplete;
-                const upcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
+                const upcLine = i.upc ? `<span>&bull;</span>UPC <span>${i.upc}</span>` : '';
                 // Surface intentional short-picks / partial-fulfills.
                 // qty < qty_ordered means warehouse is shipping less than
                 // ordered on this SO. Only render when qty_ordered is
                 // present and divergent; the 99% same-value case stays
                 // visually quiet.
                 const shortPickChip = (i.qty_ordered != null && parseInt(i.qty_ordered) !== parseInt(i.quantity))
-                    ? `<span style="background:#fef3c7; color:#92400e; font-size:0.7rem; font-weight:700; padding:3px 8px; border-radius:4px; margin-left:10px; letter-spacing:0.04em;">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
+                    ? `<span style="margin-left:10px">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
                     : '';
                 div.innerHTML = `
                     <div style="flex-grow:1"><div class="sku">${i.item.refName}${shortPickChip}</div><div class="desc">${i.sku}${upcLine}</div></div>
-                    <div style="display:flex; align-items:center;">
+                    <div style="display:flex; align-items:center">
                         <div class="qty-badge">${i.scanned_qty} / ${i.quantity}</div>
                         ${showOverride ? `<button class="manual-btn" onclick="manualOverride(${index})">&#10004;</button>` : ''}
                     </div>`;
                 list.appendChild(div);
             });
+            syncFlowUi();
         }
 
         function processBox(boxId) {
@@ -1406,6 +1291,15 @@
                 } else if (shipData.status === 'carrier_conflict') {
                     pendingCarrierConflict = shipData;
                     showCarrierModal(shipData);
+                } else if (shipData.status === 'amazon_carrier') {
+                    // Gate-3 prompts. pendingShipPayload is already built,
+                    // so answering one sets carrier_override and re-POSTs
+                    // the same payload; the operator never rescans.
+                    renderPromptRates(shipData, 'amazon-rates');
+                    showAmazonCarrierModal(shipData.ship_method || '');
+                } else if (shipData.status === 'high_value') {
+                    renderPromptRates(shipData, 'highvalue-rates');
+                    showHighValueModal(parseFloat(shipData.order_total) || currentOrderTotal);
                 } else {
                     showError("Shipping Failed: " + shipData.message);
                 }
@@ -1422,7 +1316,7 @@
             if (suggested === 'UPS' && current === 'USPS') {
                 if (isDimOverride)
                     tips.push('<strong>This package is too large/heavy for USPS.</strong> Switch to UPS.');
-                if (currentOrderTotal >= HIGH_VALUE_THRESHOLD)
+                if (currentOrderTotal>= HIGH_VALUE_THRESHOLD)
                     tips.push('Order is <strong>$' + currentOrderTotal.toFixed(2) + '</strong> - high-value orders should ship UPS for better tracking & insurance.');
                 if (!isDimOverride && currentOrderTotal < HIGH_VALUE_THRESHOLD)
                     tips.push('This box size is cheaper to ship via UPS.');
@@ -1431,7 +1325,7 @@
             if (suggested === 'USPS' && current === 'UPS') {
                 if (isRural)
                     tips.push('This is a <strong>rural ZIP</strong> - UPS charges a $4-46 area surcharge. USPS has no surcharge.');
-                if (currentCaShippingPaid > 5)
+                if (currentCaShippingPaid> 5)
                     tips.push('Customer paid <strong>$' + currentCaShippingPaid.toFixed(2) + '</strong> for shipping - consider keeping UPS.');
                 else
                     tips.push('Small package - USPS is significantly cheaper for this box.');
@@ -1439,7 +1333,7 @@
                     tips.push('Order value is under $' + HIGH_VALUE_THRESHOLD + ' and customer didn\'t pay for premium shipping - USPS is the right call.');
             }
 
-            return tips.length ? tips.map(t => '<div style="padding: 3px 0;">&#x2022; ' + t + '</div>').join('') : '';
+            return tips.length ? tips.map(t => '<div>&#x2022; ' + t + '</div>').join('') : '';
         }
 
         function showCarrierModal(conflict) {
@@ -1477,6 +1371,101 @@
             doShipRequest(pendingShipPayload);
         }
 
+        // ====== GATE-3 PROMPT PLUMBING ======
+        // A prompt returned by /ship_order pauses a ship that is already
+        // in flight: pendingShipPayload exists, the scale has been read,
+        // and nothing was bought. Answering re-POSTs the same payload with
+        // a carrier_override, so the operator never rescans anything.
+        // Quoted services from the prompt currently on screen, so a click
+        // can name the exact service AND the account that quoted it rather
+        // than re-deriving either from the ship method.
+        let promptRates = [];
+
+        function shipWithQuotedService(index) {
+            const o = promptRates[index];
+            if (!o || !pendingShipPayload) return;
+            document.querySelectorAll('.modal-overlay').forEach(m => {
+                if (m.style.display === 'flex') m.style.display = 'none';
+            });
+            pendingShipPayload.service_override = {
+                service_code: o.service_code,
+                account_id: o.account_id || '',
+                one_rate: !!o.one_rate,
+            };
+            log(`Shipping ${o.name || o.service_code} at $${Number(o.cost).toFixed(2)}...`);
+            doShipRequest(pendingShipPayload);
+        }
+
+        function resumeShipWith(carrier) {
+            if (!pendingShipPayload) {
+                // Defensive: without a payload there is no ship to resume,
+                // so fall back to the scan field rather than silently
+                // stranding the operator on a closed modal.
+                document.getElementById('main-input').focus();
+                return;
+            }
+            if (carrier) {
+                pendingShipPayload.carrier_override = carrier;
+                log(`Resuming ship with ${carrier}...`);
+            } else {
+                log('Resuming ship with the ordered carrier...');
+            }
+            doShipRequest(pendingShipPayload);
+        }
+
+        // Render the priced options a prompt came back with. Absent rates
+        // are normal (rate shopping is allowed to be unavailable), and the
+        // prompt still works without them -- it just loses the numbers.
+        function renderPromptRates(shipData, containerId) {
+            const box = document.getElementById(containerId);
+            if (!box) return;
+            const rates = shipData.rates;
+            if (!rates || !rates.options || !rates.options.length) {
+                box.innerHTML = '';
+                box.style.display = 'none';
+                return;
+            }
+            const chosenCode = rates.chosen ? rates.chosen.service_code : null;
+            const orderedCode = rates.ordered ? rates.ordered.service_code : null;
+            // Every quoted service is selectable. The operator can see all
+            // the prices, so making them read-only and then offering two
+            // carrier buttons underneath asks them to decide with the answer
+            // already on screen but out of reach.
+            promptRates = rates.options.slice();
+
+            // Three columns, one per carrier, so the operator compares like
+            // with like instead of scanning a single price-sorted list.
+            const cols = { USPS: [], UPS: [], FEDEX: [] };
+            rates.options.forEach((o, i) => (cols[o.carrier] || cols.UPS).push([o, i]));
+
+            box.innerHTML = Object.keys(cols).map(carrier => {
+                const rows = cols[carrier];
+                const inner = rows.length ? rows.map(([o, i]) => {
+                    const cls = o.service_code === chosenCode ? 'rate-row best'
+                              : o.service_code === orderedCode ? 'rate-row ordered'
+                              : 'rate-row';
+                    const days = o.transit_days == null ? ''
+                        : `<b>${o.transit_days}</b>d`;
+                    const cost = o.cost == null ? '' : `$${Number(o.cost).toFixed(2)}`;
+                    const notes = [];
+                    if (o.note) notes.push(escapeHtml(o.note));
+                    if (o.requires_fedex_box) notes.push('needs a FedEx box');
+                    const note = notes.length
+                        ? `<small class="rate-note">${notes.join(' / ')}</small>` : '';
+                    return `<button type="button" class="${cls}${o.note ? ' passed-over' : ''}"
+                                    onclick="shipWithQuotedService(${i})" title="Ship this service">
+                        <span class="rate-name">${escapeHtml(o.name || o.service_code)}${note}</span>
+                        <span class="rate-meta"><span class="rate-days">${days}</span><span class="rate-cost">${cost}</span></span>
+                    </button>`;
+                }).join('') : '<div class="rate-empty">no quote</div>';
+                return `<div class="rate-col">
+                    <div class="rate-col-head">${carrier === 'FEDEX' ? 'FedEx' : carrier}</div>
+                    ${inner}
+                </div>`;
+            }).join('');
+            box.style.display = 'block';
+        }
+
         function showAmazonCarrierModal(methodName) {
             document.getElementById('amazon-method-display').innerText = methodName;
             document.getElementById('amazon-order-total').innerText = `$${currentOrderTotal.toFixed(2)}`;
@@ -1490,7 +1479,11 @@
             document.getElementById('amazon-carrier-modal').style.display = 'none';
             document.getElementById('ship-via').innerText += ` -> ${carrier}`;
             log(`Amazon carrier selected: ${carrier}`);
-            document.getElementById('main-input').focus();
+            // Pre-v2 this only armed a variable, because the prompt fired
+            // at order load and the box scan was still to come. It now
+            // fires mid-ship, so the answer resumes the paused ship
+            // rather than waiting for a scan that already happened.
+            resumeShipWith(carrier);
         }
 
         function showHighValueModal(total) {
@@ -1512,7 +1505,7 @@
                 highValueCarrierOverride = null;
                 log('Keeping USPS for high value order');
             }
-            document.getElementById('main-input').focus();
+            resumeShipWith(carrier || null);
         }
 
         function showOBModal() {
@@ -1612,6 +1605,54 @@
             }
         }
 
+        // ====== FLOW STATE: gate spine + scan expectation ======
+        // Purely derived. Every value below is read back out of the same
+        // state handleScan() switches on, so the spine physically cannot
+        // disagree with what the next scan will actually do. Nothing here
+        // gates anything; checkCompletion() remains the only authority.
+        function syncFlowUi() {
+            if (!document.getElementById('gate-spine')) return;
+
+            const loaded = !!currentOrderId;
+            const total = getTotalItems();
+            const verified = getVerifiedCount();
+            const packed = loaded && total> 0 && verified>= total;
+
+            const setGate = (id, cls, sub) => {
+                const el = document.getElementById(id);
+                if (el) el.className = 'gate' + (cls ? ' ' + cls : '');
+                const s = document.getElementById(id + '-sub');
+                if (s) s.innerText = sub;
+            };
+
+            setGate('gate-order', loaded ? 'done' : 'live',
+                loaded ? `${currentSoNumber} loaded` : 'scan to load');
+            setGate('gate-items', loaded ? (packed ? 'done' : 'live') : '',
+                loaded ? `${verified} of ${total} units` : 'locked');
+            setGate('gate-box', packed ? 'armed' : '',
+                packed ? 'ARMED - next scan ships' : 'locked until items clear');
+
+            // Turns the scan-bar accent red while a box scan is live ammunition.
+            document.body.classList.toggle('gate-armed', packed);
+
+            let what = 'order ID';
+            let hint = 'scan the picking ticket';
+            if (packed) {
+                what = 'box code';
+                hint = isFedExMode
+                    ? 'FDX box / FXENV / FXPAK / OB - this ships the order'
+                    : '1-22 / SMALLBUB / LARGEBUB / SMALLPAK / LARGEPAK / OB - this ships the order';
+            } else if (loaded) {
+                what = 'item SKU or UPC';
+                const left = Math.max(total - verified, 0);
+                hint = `${left} unit${left === 1 ? '' : 's'} left, or "yoda" to override all`;
+            }
+            const w = document.getElementById('scan-expect-what');
+            const h = document.getElementById('scan-expect-hint');
+            if (w) w.innerText = what;
+            if (h) h.innerText = hint;
+        }
+
         function softReset() {
             document.getElementById('cancelled-modal').style.display = 'none';
             document.getElementById('success-modal').style.display = 'none';
@@ -1630,8 +1671,8 @@
             document.getElementById('cust-phone').innerText = "Waiting for scan...";
             document.getElementById('cust-addr').innerText = "Waiting for scan...";
             document.getElementById('ship-via').innerText = "Waiting for scan...";
-            document.getElementById('order-total-display').innerText = "-";
-            document.getElementById('ca-shipping-paid').innerText = "-";
+            document.getElementById('order-total-display').innerText = "$0.00";
+            document.getElementById('ca-shipping-paid').innerText = "$0.00";
             currentCaShippingPaid = 0;
             currentOrderTotal = 0;
             orderLoadedAt = null;
@@ -1639,36 +1680,44 @@
             manualCarrierOverride = null;
             const changeBtn = document.getElementById('btn-change-carrier');
             changeBtn.style.opacity = '0.4'; changeBtn.style.pointerEvents = 'none';
-            document.getElementById('item-list').innerHTML = '<div style="padding:40px; text-align:center; color:#999; font-style:italic; grid-column: span 2;">Scan Order ID to begin</div>';
+            document.getElementById('item-list').innerHTML = '<div style="font-style:italic; grid-column: span 2">Scan Order ID to begin</div>';
             resetBoxUI();
             document.getElementById('main-input').value = "";
             document.getElementById('main-input').focus();
+            syncFlowUi();
             log("Ready for next order.");
         }
 
+        // Box-card state is carried by classes, not inline backgroundColor.
+        // v1 wrote `style.backgroundColor = "var(--red)"` here, which
+        // silently stopped resolving when the palette moved into
+        // static/dockd.css and the token was renamed. Classes let the
+        // stylesheet own the colour, including the FedEx override.
         function resetBoxUI() {
             document.body.classList.remove('fedex-active');
             const card = document.getElementById('box-card');
             card.classList.remove('active');
             document.getElementById('box-header-text').innerText = "Pending Items...";
             document.getElementById('box-display').innerText = "WAITING";
-            document.getElementById('scale-section').classList.remove('weight-captured');
-            document.getElementById('scale-section').style.backgroundColor = "var(--brand-red)";
+            const scale = document.getElementById('scale-section');
+            scale.classList.remove('weight-captured');
+            scale.classList.remove('armed');
+            syncFlowUi();
         }
 
-        function activateFedExUI() { document.body.classList.add('fedex-active'); log("FEDEX MODE ACTIVATED"); }
+        function activateFedExUI() {
+            document.body.classList.add('fedex-active');
+            syncFlowUi();
+            log("FEDEX MODE ACTIVATED");
+        }
 
         function unlockBoxUI() {
             document.getElementById('box-card').classList.add('active');
-            if (isFedExMode) {
-                document.getElementById('box-header-text').innerText = "FEDEX - SCAN BOX OR ENVELOPE";
-                document.getElementById('box-display').innerText = "SCAN BOX";
-                document.getElementById('scale-section').style.backgroundColor = "var(--fedex-purple)";
-            } else {
-                document.getElementById('box-header-text').innerText = "SCAN BOX NOW";
-                document.getElementById('box-display').innerText = "SCAN BOX";
-                document.getElementById('scale-section').style.backgroundColor = "var(--success-green)";
-            }
+            document.getElementById('scale-section').classList.add('armed');
+            document.getElementById('box-display').innerText = "SCAN BOX";
+            document.getElementById('box-header-text').innerText = isFedExMode
+                ? "FEDEX - SCAN BOX OR ENVELOPE"
+                : "SCAN BOX NOW";
         }
 
         function showError(msg) { document.getElementById('error-msg').innerText = msg; document.getElementById('error-modal').style.display = 'flex'; }
@@ -1728,7 +1777,7 @@
             fetch('/log_override', {method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({order_number: currentOrderId, user: currentUser?.name || '', station: STATION_ID, override_type: 'single',
                     items: [{item_name: item.item.refName, sku: item.sku}]})});
-            if (getLinkVerifiedCount() >= getLinkTotalCount()) {
+            if (getLinkVerifiedCount()>= getLinkTotalCount()) {
                 linkStep = 'tracking';
                 document.getElementById('link-step-verify').style.display = 'none';
                 document.getElementById('link-step-tracking').style.display = 'block';
@@ -1741,18 +1790,18 @@
             const list = document.getElementById('link-item-list');
             list.innerHTML = '';
             linkItemsNeeded.forEach((i, index) => {
-                const isComplete = parseInt(i.scanned_qty) >= parseInt(i.quantity);
+                const isComplete = parseInt(i.scanned_qty)>= parseInt(i.quantity);
                 const div = document.createElement('div');
                 div.className = 'item-row' + (isComplete ? ' completed' : '');
-                div.style.cssText = 'padding:10px; border:1px solid #e0e0e0; border-radius:6px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; background:white;';
-                const qtyBadgeStyle = isComplete ? 'background:var(--brand-red); color:white;' : 'background:#ddd; color:#555;';
+                div.style.cssText = 'padding:10px; border:1px solid #e0e0e0; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; background:white;';
+                const qtyBadgeStyle = isComplete ? 'background:var(--red); color:white;' : 'background:#ddd; color:#555;';
                 const linkShowOverride = !isComplete && overrideExceptions.has(i.sku);
-                const overrideBtn = linkShowOverride ? `<button type="button" class="manual-btn" onclick="linkManualOverride(${index})" style="width:40px;height:40px;border-radius:50%;border:none;background:#e0e0e0;color:#555;cursor:pointer;font-size:18px;margin-left:10px;flex-shrink:0;" title="Mark verified">&#10004;</button>` : '';
-                const linkUpcLine = i.upc ? `<span style="color:#bbb; margin:0 6px;">&bull;</span>UPC <span style="font-family:monospace;">${i.upc}</span>` : '';
+                const overrideBtn = linkShowOverride ? `<button type="button" class="manual-btn btn" onclick="linkManualOverride(${index})" title="Mark verified">&#10004;</button>` : '';
+                const linkUpcLine = i.upc ? `<span>&bull;</span>UPC <span>${i.upc}</span>` : '';
                 const linkShortPickChip = (i.qty_ordered != null && parseInt(i.qty_ordered) !== parseInt(i.quantity))
-                    ? `<span style="background:#fef3c7; color:#92400e; font-size:0.65rem; font-weight:700; padding:2px 6px; border-radius:4px; margin-left:8px; letter-spacing:0.04em;">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
+                    ? `<span style="margin-left:8px">${i.quantity} OF ${i.qty_ordered} ORDERED</span>`
                     : '';
-                div.innerHTML = `<div style="flex-grow:1"><div class="sku" style="font-weight:700;">${i.item.refName}${linkShortPickChip}</div><div class="desc" style="font-size:12px;color:#666;">${i.sku}${linkUpcLine}</div></div><div style="display:flex; align-items:center;"><div style="${qtyBadgeStyle} padding:4px 10px; border-radius:20px; font-weight:bold;">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
+                div.innerHTML = `<div style="flex-grow:1"><div class="sku">${i.item.refName}${linkShortPickChip}</div><div class="desc">${i.sku}${linkUpcLine}</div></div><div style="display:flex; align-items:center"><div style="${qtyBadgeStyle} padding:4px 10px">${i.scanned_qty} / ${i.quantity}</div>${overrideBtn}</div>`;
                 list.appendChild(div);
             });
         }
@@ -1763,7 +1812,7 @@
         function verifyLinkItem(scannedInput) {
             const inputClean = scannedInput.trim();
             let item = linkItemsNeeded.find(i => {
-                if (parseInt(i.scanned_qty) >= parseInt(i.quantity)) return false;
+                if (parseInt(i.scanned_qty)>= parseInt(i.quantity)) return false;
                 if (i.sku === inputClean) return true;
                 if (i.upc && i.upc === inputClean) return true;
                 if (i.item.refName === inputClean) return true;
@@ -1773,7 +1822,7 @@
             if (item) {
                 item.scanned_qty++;
                 renderLinkItems();
-                if (getLinkVerifiedCount() >= getLinkTotalCount()) {
+                if (getLinkVerifiedCount()>= getLinkTotalCount()) {
                     linkStep = 'tracking';
                     document.getElementById('link-step-verify').style.display = 'none';
                     document.getElementById('link-step-tracking').style.display = 'block';
@@ -1795,9 +1844,9 @@
 
         function cleanTrackingScan(scan) {
             let s = scan.toUpperCase().trim();
-            if (s.indexOf('1Z') > -1) return s.substring(s.indexOf('1Z'));
-            if (s.indexOf('9343') > -1) return s.substring(s.indexOf('9343'));
-            if (s.indexOf('9400') > -1) return s.substring(s.indexOf('9400'));
+            if (s.indexOf('1Z')> -1) return s.substring(s.indexOf('1Z'));
+            if (s.indexOf('9343')> -1) return s.substring(s.indexOf('9343'));
+            if (s.indexOf('9400')> -1) return s.substring(s.indexOf('9400'));
             return s;
         }
 

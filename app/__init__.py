@@ -78,7 +78,17 @@ def create_app(config_class=None):
 
     logger = setup_logging(log_dir=config.LOG_DIR, level=config.LOG_LEVEL)
 
-    app = Flask(__name__, template_folder=resource_path('templates'))
+    # `static_folder` is resolved through resource_path for the same reason
+    # `template_folder` is: under a PyInstaller bundle the app runs out of
+    # sys._MEIPASS, so a relative 'static' would miss. Flask's default would
+    # have been app-root-relative and silently 404 the stylesheet in the
+    # packaged build while working fine from source.
+    app = Flask(
+        __name__,
+        template_folder=resource_path('templates'),
+        static_folder=resource_path('static'),
+        static_url_path='/static',
+    )
     # Behind Azure Container Apps ingress (one proxy hop), trust X-Forwarded-*
     # so request.remote_addr is the operator's real IP, not the shared ingress
     # address. That makes the X-Forwarded-For Dockd forwards to Sentry's

@@ -32,6 +32,7 @@ from app.services.backend import (
     RateLimitedError,
     UnknownOperatorError,
 )
+from app.services.rate_select import select_rate
 from app.services.ship_attempts import ShipAttemptsStore, new_idempotency_key
 from app.services.validation import validate_ticket
 
@@ -269,6 +270,117 @@ def _order_to_load_dict(order):
     return payload
 
 
+def _conflict_rate_summary(rate_quote, limit=6):
+    """Trim a rate-shop result down to something a modal can show.
+
+    Shows services the rule REJECTED as well as the ones it accepted, each
+    with the reason it was passed over. The auto-rule picks, but the
+    operator can override to anything that was quoted, and they cannot
+    choose what they cannot see.
+
+    Concretely: on Aurora -> Montpelier, FedEx Ground Economy quotes $14.66
+    at 7 days against USPS Ground Advantage's $13.56 at 5. The rule
+    correctly refuses to auto-downgrade delivery by two days, but hiding the
+    row entirely means an operator who knows the customer is not in a hurry
+    has no way to take it.
+
+    /shipment/rateshopping returns 19 services on this account, so the list
+    is still capped -- a pack-station prompt that lists nineteen rows is a
+    spreadsheet, and the operator is holding a scanner.
+    """
+    if not rate_quote:
+        return None
+
+    chosen = rate_quote.get('chosen')
+    ordered = rate_quote.get('ordered')
+    chosen_code = (chosen or {}).get('service_code')
+    ordered_code = (ordered or {}).get('service_code')
+
+    rows = [dict(_rate_row(s), note=None) for s in (rate_quote.get('eligible') or [])]
+    rows += [dict(_rate_row(s), note=why)
+             for s, why in (rate_quote.get('rejected') or [])]
+    rows = [r for r in rows if r.get('cost') is not None]
+    rows.sort(key=lambda r: r['cost'])
+
+    # Cap PER CARRIER. A single overall cap let the cheapest carrier fill
+    # the list and pushed the other two out, which defeats the point of a
+    # side-by-side comparison.
+    per_carrier = max(1, limit // 3)
+    keep, counts = [], {}
+    for r in rows:
+        c = r['carrier']
+        if counts.get(c, 0) < per_carrier:
+            keep.append(r)
+            counts[c] = counts.get(c, 0) + 1
+    for code in (chosen_code, ordered_code):
+        if code and not any(r['service_code'] == code for r in keep):
+            match = next((r for r in rows if r['service_code'] == code), None)
+            if match:
+                keep.append(match)
+    keep.sort(key=lambda r: r['cost'])
+
+    return {
+        'chosen': _rate_row(chosen) if chosen else None,
+        'ordered': _rate_row(ordered),
+        'savings': rate_quote.get('savings'),
+        'reason': rate_quote.get('reason'),
+        'options': keep,
+    }
+
+
+def _quoted_cost(rate_quote):
+    """Price of the service rate shopping picked, or None if it did not run.
+
+    None is meaningful and must not become 0.0: a zero here would read as
+    "quoted free" in any later margin query, which is worse than an honest
+    unknown.
+    """
+    chosen = (rate_quote or {}).get('chosen')
+    return chosen.get('total') if chosen else None
+
+
+def _quoted_service(rate_quote):
+    chosen = (rate_quote or {}).get('chosen')
+    return chosen.get('service_code') if chosen else None
+
+
+def _carrier_of(service_code):
+    """Group a ShipRush service code by carrier for the three-column view.
+
+    Codes are the carriers' own and share no prefix scheme: USPS is
+    USPSGNDADV / U02 / U05, FedEx is F-prefixed, and UPS is bare numerics
+    (03, 02, 12, 01) plus a couple of word codes. Anything unrecognised
+    lands under UPS rather than being dropped, since a service that cannot
+    be placed is still a service the operator may need.
+    """
+    code = str(service_code or '').upper()
+    if code.startswith('USPS') or (code.startswith('U') and code[1:].isdigit()):
+        return 'USPS'
+    if code.startswith('F'):
+        return 'FEDEX'
+    return 'UPS'
+
+
+def _rate_row(service):
+    """Flatten one quoted service for the wire. Kept deliberately small:
+    the browser needs a label, a price and a transit figure, not the whole
+    ShipRush payload."""
+    if not service:
+        return None
+    return {
+        'name': service.get('name'),
+        'service_code': service.get('service_code'),
+        'cost': service.get('total'),
+        'transit_days': service.get('transit_days'),
+        'one_rate': service.get('one_rate', False),
+        'carrier': _carrier_of(service.get('service_code')),
+        'requires_fedex_box': bool(service.get('requires_fedex_box')),
+        # Carried so a clicked row can buy this exact service on the exact
+        # account that quoted it, rather than re-deriving either.
+        'account_id': service.get('account_id'),
+    }
+
+
 def _backend_error_to_message(exc, default='Could not load order.'):
     """Map a typed BackendError into a user-facing string."""
     if isinstance(exc, NotFoundError):
@@ -473,6 +585,39 @@ class ShippingService:
             box_id, ship_method_raw, ob_dims,
         )
 
+        # Rate shop BEFORE the carrier decision, so the decision is made
+        # against real prices instead of the weight/box heuristics that
+        # were standing in for them. Read-only: /shipment/rateshopping
+        # buys nothing.
+        #
+        # Deliberately non-fatal. A quote that times out, errors, or comes
+        # back empty leaves `rate_quote` as None and the flow continues on
+        # exactly the pre-v2 path. Rate shopping is allowed to improve a
+        # ship; it is never allowed to prevent one.
+        rate_quote = self._rate_shop_for(order, dims, weight, packaging_code,
+                                         ship_method_raw)
+
+        # Carrier prompts that used to fire at order-load time now fire
+        # here, at gate 3.
+        #
+        # They moved because they could not be priced where they were. Both
+        # ran inside fetchOrder(), before any box was scanned, so no weight
+        # and no dims existed and therefore no quote could. The operator was
+        # asked to choose a carrier -- sometimes a $12 swing -- with no
+        # number anywhere on screen, and the answer then sat in a JS
+        # variable until the box scan spent it minutes later.
+        #
+        # Returned as statuses so they use the same pause-and-resume
+        # machinery carrier_conflict already has, and so the server (which
+        # has the settings and the order) owns the rule instead of the
+        # browser re-deriving it.
+        if not carrier_override:
+            prompt = self._carrier_prompt_for(order, ship_method_raw)
+            if prompt:
+                if rate_quote:
+                    prompt['rates'] = _conflict_rate_summary(rate_quote)
+                return prompt
+
         # Carrier conflict check (unless operator already overriding or
         # the order is already on FedEx).
         if not carrier_override:
@@ -486,6 +631,13 @@ class ShippingService:
                 dest_country=dest_country,
             )
             if conflict:
+                # Hand the operator prices instead of adjectives. The
+                # conflict itself is still the carrier engine's call --
+                # rural surcharges and USPS size caps are eligibility
+                # rules that no quote can answer -- but what each option
+                # costs is now a fact rather than "cheaper for this box".
+                if rate_quote:
+                    conflict['rates'] = _conflict_rate_summary(rate_quote)
                 return conflict
 
         # Apply carrier override (unchanged carrier-engine logic).
@@ -673,6 +825,14 @@ class ShippingService:
             customs_value=customs_value_total,
             customs_currency=customs_currency_log,
             hs_codes=hs_codes_log,
+            # Quote vs charge. quoted_cost comes from /rateshopping before
+            # the buy; shipping_cost above is <CarrierRate> off the label
+            # response after it. They are built by two different XML
+            # builders, so a persistent gap between them means those
+            # builders disagree about the shipment, not that pricing moved.
+            quoted_cost=_quoted_cost(rate_quote),
+            quoted_service=_quoted_service(rate_quote),
+            chosen_reason=(rate_quote or {}).get('reason'),
         )
 
         today = datetime.now().strftime('%Y-%m-%d')
@@ -1006,6 +1166,119 @@ class ShippingService:
         today = datetime.now().strftime('%Y-%m-%d')
         return self.ship_counts.get((user, today), 0)
 
+    def _carrier_prompt_for(self, order, ship_method_raw):
+        """Amazon / high-value carrier prompts, or None.
+
+        Both were client-side conditionals in fetchOrder(). Server-side is
+        the right home: the settings that drive them already live here, and
+        a stale browser could previously skip either prompt entirely by
+        POSTing straight to /ship_order.
+
+        Returns a dict shaped like check_carrier_conflict()'s output so the
+        frontend handles all three the same way.
+        """
+        if not self.settings:
+            return None
+
+        method = (ship_method_raw or '').strip().lower()
+        if not method:
+            return None
+
+        # Amazon names a service level but never a carrier, so somebody has
+        # to choose one. Configured list, matched exactly as the frontend
+        # did, so behaviour does not shift with the move.
+        amazon_methods = [
+            str(m).strip().lower()
+            for m in (self.settings.get('amazon_methods') or [])
+        ]
+        if method in amazon_methods:
+            return {
+                'status': 'amazon_carrier',
+                'reason': f'Amazon method "{ship_method_raw}" does not name a carrier.',
+                'ship_method': ship_method_raw,
+                'order_total': order.order_total,
+                'ca_shipping_paid': order.customer_shipping_paid,
+            }
+
+        # High value on a USPS-ish service: prompt to upgrade for tracking
+        # and claims coverage. Threshold of 0 disables it, matching the
+        # existing convention that an unconfigured install prompts for
+        # nothing.
+        try:
+            threshold = float(self.settings.get('high_value_threshold') or 0)
+        except (TypeError, ValueError):
+            threshold = 0
+        order_total = float(order.order_total or 0)
+
+        already_premium = 'fedex' in method or 'ups' in method
+        usps_ish = any(t in method for t in
+                       ('usps', 'ground advantage', 'priority', 'first class'))
+
+        if threshold and order_total >= threshold and usps_ish and not already_premium:
+            return {
+                'status': 'high_value',
+                'reason': (
+                    f'Order is ${order_total:.2f} on {ship_method_raw}. '
+                    f'Upgrade for tracking and claims coverage?'
+                ),
+                'ship_method': ship_method_raw,
+                'order_total': order.order_total,
+                'ca_shipping_paid': order.customer_shipping_paid,
+            }
+
+        return None
+
+    def _rate_shop_for(self, order, dims, weight, packaging_code, ship_method_raw):
+        """Quote every provisioned service, then apply the selection rule.
+
+        Returns the select_rate() dict, or None if quoting was unavailable
+        for any reason. None is a completely normal outcome -- callers must
+        treat it as "no extra information" and proceed on the pre-v2 path,
+        never as an error worth surfacing to the operator. A pack station
+        that cannot ship because a price lookup was slow is a worse system
+        than one that occasionally overpays by a dollar.
+        """
+        # The guard covers the WHOLE body, not just the network call. The
+        # service-code lookup and the selection are just as capable of
+        # raising (an unmapped ship method, a malformed quote), and any
+        # escape from here would abort a ship that was otherwise fine.
+        try:
+            addr = order.shipping_address
+            quote = self.shiprush.rate_shop(
+                {
+                    'addressee': addr.name or order.customer_name or '',
+                    'addr1': addr.line1 or '',
+                    'addr2': addr.line2 or '',
+                    'city': addr.city or '',
+                    'state': addr.state or '',
+                    'zip': addr.postal_code or '',
+                    'country': _normalize_country(addr.country),
+                    'addrPhone': addr.phone or '',
+                },
+                dims, weight, packaging_code,
+            )
+
+            if quote.get('status') != 'success':
+                logger.info("Rate shop unavailable: %s", quote.get('message'))
+                return None
+
+            ordered_code = self.shiprush.service_code_for(ship_method_raw)
+            # Billable weight drives the Ground Economy dim ceiling.
+            dim_lb = (dims.get('l', 0) * dims.get('w', 0) * dims.get('h', 0)) / 139.0
+            billable = max(float(weight or 0), dim_lb)
+            selection = select_rate(quote['services'], ordered_code=ordered_code,
+                                    billable_lb=billable)
+            logger.info(
+                "Rate shop: %d services quoted, chose %s (%s)",
+                len(quote['services']),
+                (selection.get('chosen') or {}).get('service_code', 'none'),
+                selection.get('reason'),
+            )
+            return selection
+        except Exception as exc:
+            logger.warning("Rate shop raised, continuing without quotes: %s", exc)
+            return None
+
     def _log_to_db(self, order_number, fulfillment_id, ff_data,
                    effective_box_id, dims, weight, shipping_cost,
                    tracking, carrier_override, carrier_switched,
@@ -1016,7 +1289,8 @@ class ShippingService:
                    sentry_fulfillment_id=None, manual_link=False,
                    idempotency_key=None, destination_country=None,
                    customs_value=None, customs_currency=None,
-                   hs_codes=None, carrier=None):
+                   hs_codes=None, carrier=None, quoted_cost=None,
+                   quoted_service=None, chosen_reason=None):
         """Write shipping record to local history database."""
         try:
             shipped_at = datetime.now()
@@ -1061,9 +1335,11 @@ class ShippingService:
                             external_id, customer_shipping_paid, order_total,
                             sentry_audit_log_id, sentry_fulfillment_id, manual_link,
                             idempotency_key, destination_country, customs_value,
-                            customs_currency, hs_codes)
+                            customs_currency, hs_codes,
+                            quoted_cost, quoted_service, chosen_reason)
                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                   %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                   %s, %s, %s)""",
                         (order_number, fulfillment_id, items_skus, effective_box_id,
                          dims_str, weight, shipping_cost, tracking, final_carrier,
                          ship_method_raw, current_user,
@@ -1076,7 +1352,8 @@ class ShippingService:
                          sentry_audit_log_id, sentry_fulfillment_id,
                          1 if manual_link else 0, idempotency_key,
                          destination_country, customs_value, customs_currency,
-                         hs_codes),
+                         hs_codes,
+                         quoted_cost, quoted_service, chosen_reason),
                     )
                 conn.commit()
         except Exception as e:

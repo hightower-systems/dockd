@@ -121,3 +121,36 @@ class TestAdultSignatureToggle:
         """Companion v0.7.0 marker: INTL pill exists on the order row."""
         body = client.get('/').data.decode('utf-8')
         assert 'intl-pill' in body
+
+
+class TestOrderPanelIntegrity:
+    """Guards a class of breakage a restyle can introduce silently.
+
+    A layout edit once left the previous version of the order fields in the
+    document alongside the new ones. The visible symptom was a scrambled
+    panel, but the quiet one was worse: five element ids appeared twice, and
+    getElementById returns the FIRST match, so fetchOrder() would have
+    populated the orphaned copies and left the visible ones reading
+    "Waiting for scan..." on a loaded order.
+    """
+
+    ORDER_FIELD_IDS = ('order-id-display', 'cust-name', 'cust-phone',
+                       'cust-addr', 'ship-via', 'order-total-display',
+                       'ca-shipping-paid')
+
+    def test_every_order_field_id_appears_exactly_once(self, client):
+        import re
+        body = client.get('/').data.decode('utf-8')
+        for eid in self.ORDER_FIELD_IDS:
+            hits = len(re.findall(rf'id="{eid}"', body))
+            assert hits == 1, f'{eid} appears {hits} times, expected exactly 1'
+
+    def test_div_tags_balance(self, client):
+        """An unbalanced div closes its ancestors early, which is what
+        dropped the pack meter out of the workspace grid and under it."""
+        body = client.get('/').data.decode('utf-8')
+        assert body.count('<div') == body.count('</div>')
+
+    def test_order_fields_use_the_three_column_shape(self, client):
+        body = client.get('/').data.decode('utf-8')
+        assert body.count('class="ocol') == 3
